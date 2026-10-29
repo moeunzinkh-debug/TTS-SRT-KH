@@ -1,0 +1,146 @@
+name: Test and deploy Cloudflare Worker
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, closed]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worker-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    if: github.event_name != 'pull_request' || github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: npm ci
+      - run: python -m pip install -r requirements-dev.txt
+      - run: npm test
+      - run: python -m pytest -q
+      - run: npm run check:deploy
+
+  preview:
+    needs: test
+    # Fork PRs and Dependabot cannot access repository secrets. Never use
+    # pull_request_target to deploy untrusted code with the Cloudflare token.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Check whether preview credentials are configured
+        id: credentials
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [[ -n "$TOKEN" && -n "$ACCOUNT" ]]; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'Preview skipped: configure CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Deploy isolated PR Worker
+        if: steps.credentials.outputs.ready == 'true'
+        id: deploy
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --name tts-srt-kh-pr-${{ github.event.pull_request.number }}
+      - name: Show preview URL
+        if: steps.credentials.outputs.ready == 'true'
+        env:
+          URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: printf '### Cloudflare PR preview\n\n%s\n' "$URL" >> "$GITHUB_STEP_SUMMARY"
+
+  cleanup-preview:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete the PR Worker if it exists
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [[ -z "$CLOUDFLARE_API_TOKEN" || -z "$CLOUDFLARE_ACCOUNT_ID" ]]; then
+            echo 'No Cloudflare credentials; preview cleanup skipped.'
+            exit 0
+          fi
+          name="tts-srt-kh-pr-${PR_NUMBER}"
+          # force=false prevents breaking any other Worker that references it.
+          status=$(curl -sS -o "$RUNNER_TEMP/cloudflare-delete.json" -w '%{http_code}' -X DELETE \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$name?force=false")
+          if [[ "$status" == '404' ]]; then
+            echo 'No preview Worker to delete.'
+            exit 0
+          fi
+          if [[ "$status" != '200' && "$status" != '204' ]]; then
+            echo "::error::Cloudflare preview deletion failed with HTTP $status"
+            exit 1
+          fi
+          python -c 'import json, pathlib, sys; p=pathlib.Path(sys.argv[1]); data=p.read_text(); sys.exit(1 if data and not json.loads(data).get("success", True) else 0)' "$RUNNER_TEMP/cloudflare-delete.json"
+          echo "Deleted preview $name."
+
+  deploy:
+    needs: test
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Require Cloudflare credentials
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [[ -z "$TOKEN" || -z "$ACCOUNT" ]]; then
+            echo '::error::Set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets before deploying.'
+            exit 1
+          fi
+      - name: Deploy production Worker
+        id: deploy
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+      - name: Show deployment URL
+        env:
+          URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: printf '### Cloudflare Worker\n\n%s\n' "$URL" >> "$GITHUB_STEP_SUMMARY"

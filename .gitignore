@@ -1,0 +1,11 @@
+node_modules/
+.wrangler/
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+output_audio/
+.dev.vars*
+.env
+.env.*
+!.env.example
