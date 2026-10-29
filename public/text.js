@@ -3,12 +3,20 @@
 // so ordinary text containing numbers is preserved.
 const TIMING_LINE = /^\s*(?:\d{1,2}:)?\d{2}:\d{2}[,.]\d{1,3}\s*-->\s*(?:\d{1,2}:)?\d{2}:\d{2}[,.]\d{1,3}(?:\s+.*)?\s*$/;
 
+// The same rules are used by the editor's per-line controls and synthesis.
+export function isSrtMetadata(lines, index) {
+    const line = index === 0 ? (lines[index] || '').replace(/^\uFEFF/, '') : (lines[index] || '');
+    return TIMING_LINE.test(line) ||
+        (/^\s*\d+\s*$/.test(line) && TIMING_LINE.test(lines[index + 1] || ''));
+}
+
+export function hasSpokenText(line) {
+    return !!line.replace(/^\uFEFF/, '').replace(/<\/?[A-Za-z][^>]*>/g, '').trim();
+}
+
 export function stripSrtMetadata(value) {
     const lines = value.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n');
-    return lines.filter((line, index) => {
-        if (TIMING_LINE.test(line)) return false;
-        return !(/^\s*\d+\s*$/.test(line) && TIMING_LINE.test(lines[index + 1] || ''));
-    }).join('\n');
+    return lines.filter((line, index) => !isSrtMetadata(lines, index)).join('\n');
 }
 
 // SRT timing is intentionally discarded: this application concatenates the
@@ -20,7 +28,10 @@ export function splitDialogue(value) {
         .filter(Boolean);
 }
 
-export function buildVoiceParts(value, currentVoiceId, voiceConfigs, tagConfigs) {
+export function buildVoiceParts(value, currentVoiceId, voiceConfigs, tagConfigs, lineVoices) {
+    if (lineVoices?.size) {
+        return buildLineVoiceParts(value, currentVoiceId, voiceConfigs, tagConfigs, lineVoices);
+    }
     const text = stripSrtMetadata(value);
     const parts = [];
     const voiceTag = /<(piseth|sreymom|mina|visal)\b([^>]*)>([\s\S]*?)<\/\1\s*>/gi;
@@ -45,4 +56,81 @@ export function buildVoiceParts(value, currentVoiceId, voiceConfigs, tagConfigs)
 
     append(text.slice(lastIndex), currentVoiceId, main.speed, main.pitch);
     return parts;
+}
+
+// Override the voice for complete source lines without changing the user's text.
+// Existing inline tags continue to work on all lines without an override, even
+// when a tag spans several lines. SRT metadata is never assigned a voice.
+function buildLineVoiceParts(value, currentVoiceId, voiceConfigs, tagConfigs, lineVoices) {
+    const source = value.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n');
+    const retained = [];
+    let offset = 0;
+    for (let index = 0; index < source.length; index++) {
+        if (isSrtMetadata(source, index)) continue;
+        retained.push({ index, start: offset, text: source[index] });
+        offset += source[index].length + 1;
+    }
+    const text = retained.map(line => line.text).join('\n');
+    const parts = [];
+    const main = voiceConfigs[currentVoiceId];
+
+    const lineAt = position => {
+        let low = 0;
+        let high = retained.length;
+        while (low + 1 < high) {
+            const middle = Math.floor((low + high) / 2);
+            if (retained[middle].start <= position) low = middle;
+            else high = middle;
+        }
+        return low;
+    };
+
+    const append = (chunk, voiceName, speed, pitch) => {
+        if (!chunk) return;
+        const previous = parts[parts.length - 1];
+        // Keep separators without creating empty parts or needless voice changes.
+        if (!chunk.trim()) {
+            if (previous) previous.text += chunk;
+        } else if (previous && previous.voiceName === voiceName && previous.speed === speed && previous.pitch === pitch) {
+            previous.text += chunk;
+        } else {
+            parts.push({ text: chunk, voiceName, speed, pitch });
+        }
+    };
+
+    const appendRun = (run, start, voiceName, speed, pitch) => {
+        if (!run) return;
+        let line = lineAt(start);
+        let position = 0;
+        while (position < run.length) {
+            const newline = run.indexOf('\n', position);
+            const end = newline < 0 ? run.length : newline + 1;
+            const selected = lineVoices.get(retained[line].index);
+            const selectedConfig = voiceConfigs[selected];
+            if (selectedConfig) {
+                append(run.slice(position, end), selected, selectedConfig.speed, selectedConfig.pitch);
+            } else {
+                append(run.slice(position, end), voiceName, speed, pitch);
+            }
+            position = end;
+            if (newline >= 0) line++;
+        }
+    };
+
+    const voiceTag = /<(piseth|sreymom|mina|visal)\b([^>]*)>([\s\S]*?)<\/\1\s*>/gi;
+    let lastIndex = 0;
+    let match;
+    while ((match = voiceTag.exec(text)) !== null) {
+        appendRun(text.slice(lastIndex, match.index), lastIndex, currentVoiceId, main.speed, main.pitch);
+        const name = match[1].toLowerCase();
+        const defaults = tagConfigs[name] || { speed: 1, pitch: 0 };
+        const speed = /\bspeed\s*=\s*(["'])(.*?)\1/i.exec(match[2]);
+        const pitch = /\bpitch\s*=\s*(["'])(.*?)\1/i.exec(match[2]);
+        const contentStart = match.index + match[0].indexOf('>') + 1;
+        appendRun(match[3], contentStart, name, speed ? Number(speed[2]) : defaults.speed,
+            pitch ? Number(pitch[2]) : defaults.pitch);
+        lastIndex = voiceTag.lastIndex;
+    }
+    appendRun(text.slice(lastIndex), lastIndex, currentVoiceId, main.speed, main.pitch);
+    return parts.map(part => ({ ...part, text: part.text.trim() })).filter(part => part.text);
 }

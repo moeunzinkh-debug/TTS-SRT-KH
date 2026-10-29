@@ -1,5 +1,5 @@
-const CACHE_NAME = 'voice-studio-v3';
-const APP_SHELL = ['/', '/script.js', '/text.js', '/style.css', '/manifest.json'];
+const CACHE_NAME = 'voice-studio-v5';
+const APP_SHELL = ['/', '/script.js', '/text.js', '/line-voices.js', '/style.css', '/manifest.json'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL))
