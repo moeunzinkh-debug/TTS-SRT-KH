@@ -1,7 +1,11 @@
 import { buildVoiceParts } from './text.js';
+import { createLineVoiceControls } from './line-voices.js';
 
 let currentVoiceId = 'piseth';
+let lineVoiceControls = null;
 let audioObjectUrl = null;
+let uploadSequence = 0;
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 const voiceConfigs = {
     piseth: { speed: 1.0, pitch: 0, voice: "km-KH-PisethNeural", name: "Piseth" },
     sreymom: { speed: 1.0, pitch: 0, voice: "km-KH-SreymomNeural", name: "Sreymom" }
@@ -69,6 +73,16 @@ document.addEventListener('DOMContentLoaded', () => {
         document.documentElement.classList.remove('dark');
         updateThemeIcon(false);
     }
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+    lineVoiceControls = createLineVoiceControls({
+        editor: document.getElementById('editor'),
+        gutter: document.getElementById('voice-line-gutter'),
+        mirror: document.getElementById('voice-line-mirror'),
+        resetButton: document.getElementById('line-voice-reset'),
+        status: document.getElementById('line-voice-status'),
+    });
 });
 
 window.toggleTheme = () => {
@@ -157,6 +171,7 @@ window.insertTag = (vId) => {
     editor.focus();
     if (!document.execCommand('insertText', false, tagToInsert)) {
         editor.value = text.substring(0, start) + tagToInsert + text.substring(end);
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
     }
 
     requestAnimationFrame(() => {
@@ -257,6 +272,7 @@ window.saveSettings = () => {
 
             const text = editor.value;
             editor.value = text.substring(0, selectedRange.start) + tagText + text.substring(selectedRange.end);
+            editor.dispatchEvent(new Event('input', { bubbles: true }));
         }
     }
 
@@ -267,16 +283,69 @@ window.closeSettings = () => {
     document.getElementById('settings-modal').classList.add('hidden');
 };
 
+// Read files locally; the text is only sent to the API when Generate is pressed.
+window.uploadTextFile = async (event) => {
+    const input = event.currentTarget || event.target;
+    const file = input.files?.[0];
+    // Reset immediately so the same file can be selected again.
+    input.value = '';
+    if (!file) return;
+    const uploadId = ++uploadSequence;
+
+    const isTextFile = /\.(srt|txt)$/i.test(file.name) ||
+        ['text/plain', 'application/x-subrip'].includes(file.type.toLowerCase());
+    if (!isTextFile) {
+        alert('⚠️ សូមជ្រើសរើសឯកសារ SRT ឬ TXT។');
+        return;
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+        alert('⚠️ ឯកសារធំពេក។ ទំហំអតិបរមា 5 MB។');
+        return;
+    }
+
+    try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        if (uploadId !== uploadSequence) return;
+        const encoding = bytes[0] === 0xff && bytes[1] === 0xfe ? 'utf-16le' :
+            bytes[0] === 0xfe && bytes[1] === 0xff ? 'utf-16be' : 'utf-8';
+        // Textarea values normalize line endings; compare in the same form when reselecting a file.
+        const text = new TextDecoder(encoding, { fatal: true }).decode(bytes)
+            .replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+        if (text.includes('\0')) throw new Error('Invalid text file');
+        if (!text.trim()) {
+            alert('⚠️ ឯកសារនេះគ្មានអត្ថបទទេ។');
+            return;
+        }
+
+        const editor = document.getElementById('editor');
+        if (editor.value.trim() && editor.value !== text &&
+            !confirm('តើអ្នកចង់ជំនួសអត្ថបទបច្ចុប្បន្នដោយឯកសារនេះឬ?')) return;
+        if (editor.value !== text) lineVoiceControls?.reset();
+        editor.value = text;
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        editor.focus();
+    } catch (error) {
+        if (uploadId !== uploadSequence) return;
+        console.error('Error reading text file:', error);
+        alert('⚠️ មិនអាចអានឯកសារបានទេ។ សូមប្រើ UTF-8 ឬ UTF-16 ដែលមាន BOM។');
+    }
+};
+
 window.clearEditor = () => {
     if(confirm("តើលុបអត្ថបទទាំងអស់ជាក់លាក់ឬ?")) {
-        document.getElementById('editor').value = "";
+        uploadSequence++; // Do not let an earlier file read undo Clear.
+        lineVoiceControls?.reset();
+        const editor = document.getElementById('editor');
+        editor.value = "";
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
     }
 };
 
 // --- ផលិតសំឡេង (Main Function) ---
 window.generateAudio = async () => {
-    const textValue = document.getElementById('editor').value.trim();
-    if (!textValue) {
+    // Keep original line numbers (including leading blank lines) for voice choices.
+    const textValue = document.getElementById('editor').value;
+    if (!textValue.trim()) {
         alert("សូមបញ្ចូលអត្ថបទ SRT ឬអត្ថបទធម្មតា!");
         return;
     }
@@ -288,7 +357,7 @@ window.generateAudio = async () => {
     document.getElementById('loader').classList.remove('hidden');
     document.getElementById('audio-container').classList.add('hidden');
 
-    const parts = buildVoiceParts(textValue, currentVoiceId, voiceConfigs, tagConfigs);
+    const parts = buildVoiceParts(textValue, currentVoiceId, voiceConfigs, tagConfigs, lineVoiceControls?.getChoices());
     const formData = new FormData();
     formData.append('data', JSON.stringify(parts));
     formData.append('autoSpeed', isAutoSpeedActive);
