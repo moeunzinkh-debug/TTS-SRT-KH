@@ -1,0 +1,62 @@
+{
+  "name": "SRT Smart Voice Studio V2",
+  "short_name": "Voice Studio",
+  "description": "បង្កើតសំឡេង AI និង Clone Voice ពីអត្ថបទ SRT",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#4f46e5",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%234f46e5' width='192' height='192'/><text x='50%' y='50%' font-size='80' font-weight='bold' fill='white' text-anchor='middle' dominant-baseline='middle'>🎤</text></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect fill='%234f46e5' width='512' height='512'/><text x='50%' y='50%' font-size='300' font-weight='bold' fill='white' text-anchor='middle' dominant-baseline='middle'>🎤</text></svg>",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 540 720'><rect fill='%23f1f5f9' width='540' height='720'/><text x='50%' y='50%' font-size='120' font-weight='bold' fill='%234f46e5' text-anchor='middle' dominant-baseline='middle'>🎵 Voice Studio</text></svg>",
+      "sizes": "540x720",
+      "type": "image/svg+xml",
+      "form_factor": "narrow"
+    }
+  ],
+  "categories": ["productivity", "utilities"],
+  "shortcuts": [
+    {
+      "name": "AI Voice",
+      "short_name": "AI",
+      "description": "ផលិតសំឡេង AI",
+      "url": "/?tab=ai",
+      "icons": [
+        {
+          "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'><rect fill='%2316a34a' width='96' height='96' rx='20'/><text x='50%' y='50%' font-size='50' text-anchor='middle' dominant-baseline='middle'>👦</text></svg>",
+          "sizes": "96x96",
+          "type": "image/svg+xml"
+        }
+      ]
+    },
+    {
+      "name": "Clone Voice",
+      "short_name": "Clone",
+      "description": "ផលិតសំឡេង Clone",
+      "url": "/?tab=clone",
+      "icons": [
+        {
+          "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'><rect fill='%23d97706' width='96' height='96' rx='20'/><text x='50%' y='50%' font-size='50' text-anchor='middle' dominant-baseline='middle'>🎤</text></svg>",
+          "sizes": "96x96",
+          "type": "image/svg+xml"
+        }
+      ]
+    }
+  ]
+}
