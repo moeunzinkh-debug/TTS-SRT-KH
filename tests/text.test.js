@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildVoiceParts, splitDialogue, stripSrtMetadata } from '../public/text.js';
+import { buildVoiceParts, getLineInheritedSettings, splitDialogue, stripSrtMetadata } from '../public/text.js';
 import { prepareSegments } from '../worker/prepare.js';
 
 const voices = {
@@ -82,4 +82,39 @@ test('selected line voices reach the Worker as ordered Khmer voices with their m
     ['ស្រី', 'km-KH-SreymomNeural', '+0%', '+0Hz'],
     ['ប្រុសម្ដងទៀត', 'km-KH-PisethNeural', '-10%', '+20Hz'],
   ]);
+});
+
+test('per-line speed and pitch override only that line while retaining voice tags', () => {
+  const input = '1\n00:00:01,000 --> 00:00:03,000\n<sreymom speed="1.3" pitch="-2">first\nsecond</sreymom> after\n\n2\n00:00:04,000 --> 00:00:05,000\nlast';
+  const settings = new Map([[3, { speed: 0.7, pitch: 4 }]]);
+  assert.deepEqual(buildVoiceParts(input, 'piseth', voices, tags, undefined, settings), [
+    { text: 'first', voiceName: 'sreymom', speed: 1.3, pitch: -2 },
+    { text: 'second', voiceName: 'sreymom', speed: 0.7, pitch: 4 },
+    { text: 'after', voiceName: 'piseth', speed: 0.7, pitch: 4 },
+    { text: 'last', voiceName: 'piseth', speed: 0.9, pitch: 1 },
+  ]);
+  const chosen = new Map([[3, 'piseth']]);
+  assert.deepEqual(buildVoiceParts(input, 'piseth', voices, tags, chosen, settings).map(p => [p.text, p.voiceName, p.speed, p.pitch]), [
+    ['first', 'sreymom', 1.3, -2], ['second after', 'piseth', 0.7, 4], ['last', 'piseth', 0.9, 1],
+  ]);
+});
+
+test('custom 1.0x line speed stays fixed when Auto Speed is enabled', () => {
+  const long = 'ខ'.repeat(46);
+  const text = `${long}\n${long}`;
+  const settings = new Map([[1, { speed: 1, pitch: 0 }]]);
+  const parts = buildVoiceParts(text, 'sreymom', voices, tags, undefined, settings, true);
+  assert.deepEqual(parts.map(({ speed, autoSpeed }) => [speed, autoSpeed]), [[1, undefined], [1, false]]);
+  assert.deepEqual(prepareSegments(parts, true).map(({ rate }) => rate), ['+40%', '+0%']);
+  // Without Auto Speed, equal adjacent settings can still be batched.
+  assert.equal(buildVoiceParts(text, 'sreymom', voices, tags, undefined, settings, false).length, 1);
+});
+
+test('line settings dialog inherits explicit voice choices and tags spanning lines', () => {
+  const input = '1\n00:00:01,000 --> 00:00:03,000\n<sreymom speed="1.3" pitch="-2">first\nsecond</sreymom> after\nplain';
+  assert.deepEqual(getLineInheritedSettings(input, 2, 'piseth', voices, tags), { speed: 1.3, pitch: -2 });
+  assert.deepEqual(getLineInheritedSettings(input, 3, 'piseth', voices, tags), { speed: 1.3, pitch: -2 });
+  assert.deepEqual(getLineInheritedSettings(input, 3, 'piseth', voices, tags, new Map([[3, 'piseth']])), { speed: 0.9, pitch: 1 });
+  assert.deepEqual(getLineInheritedSettings(input, 4, 'piseth', voices, tags), { speed: 0.9, pitch: 1 });
+  assert.deepEqual(getLineInheritedSettings('<sreymom speed="bad" pitch="20">oops</sreymom>', 0, 'piseth', voices, tags), { speed: 0.9, pitch: 1 });
 });

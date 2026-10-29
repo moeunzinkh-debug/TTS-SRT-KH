@@ -42,10 +42,23 @@ test('rejects invalid parts, settings, excess text and too many voice changes', 
     [], {}, [{ text: 1 }], [part('hello', { voiceName: 'unknown' })],
     [part('hello', { speed: null })], [part('hello', { speed: 2.1 })],
     [part('hello', { pitch: 1.5 })], [part('hello', { pitch: 11 })],
+    [part('hello', { autoSpeed: 'false' })], [part('hello', { autoSpeed: null })],
     [part(' ')],
   ];
   for (const input of bad) assert.throws(() => prepareSegments(input), InputError);
   assert.throws(() => prepareSegments([part('x'.repeat(20001))]), error => error.status === 413);
   const manyVoices = Array.from({ length: 41 }, (_, index) => part('hello', { voiceName: index % 2 ? 'sreymom' : 'piseth' }));
   assert.throws(() => prepareSegments(manyVoices), error => error.status === 413);
+});
+
+test('per-part Auto Speed overrides the global flag without changing older requests', () => {
+  const long = 'ខ'.repeat(46);
+  const tasks = prepareSegments([
+    part(long), part(long, { autoSpeed: false, pitch: 2 }), part(long, { autoSpeed: true, pitch: -2 }),
+  ], true);
+  assert.deepEqual(tasks.map(({ rate, pitch }) => [rate, pitch]), [
+    ['+40%', '+0Hz'], ['+0%', '+40Hz'], ['+40%', '-40Hz'],
+  ]);
+  assert.equal(prepareSegments([part(long, { autoSpeed: true })], false)[0].rate, '+40%');
+  assert.equal(prepareSegments([part(long)], false)[0].rate, '+0%');
 });

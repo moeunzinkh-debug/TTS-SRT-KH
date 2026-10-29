@@ -7,8 +7,8 @@ const VOICES = [
 ];
 
 // Keep choices on unchanged lines when users edit, insert, or delete lines.
-// When one line is split, both pieces retain its voice; when lines are joined,
-// the resulting line keeps the first line's choice.
+// When one line is split, both pieces retain its choices; when lines are joined,
+// the resulting line keeps the first line's choices.
 export function reconcileLineVoices(previous, next, choices, edit = null) {
     if (!choices.size) return new Map();
     let prefix = 0;
@@ -88,15 +88,18 @@ function selectionEdit(previous, next, starts, selection) {
 // A hidden mirror measures wrapping exactly like the textarea. Only controls
 // for visible lines are rendered, so long SRT files do not create thousands of
 // buttons. The text itself remains a normal textarea for editing and pasting.
-export function createLineVoiceControls({ editor, gutter, mirror, resetButton, status }) {
+export function createLineVoiceControls({ editor, gutter, settingsLayer, mirror, resetButton, status, openLineSettings, onDocumentChange }) {
     let previousValue = editor.value;
     let lines = previousValue.split('\n');
     let starts = lineStarts(lines);
     let choices = new Map();
+    let lineSettings = new Map();
+    let revision = 0;
     let beforeInput = null;
     let frame = 0;
     let mirroredValue = null;
     const rows = new Map();
+    const settingsButtons = new Map();
     const range = document.createRange();
 
     function scheduleRender() {
@@ -147,6 +150,52 @@ export function createLineVoiceControls({ editor, gutter, mirror, resetButton, s
         return row;
     }
 
+    function updateSettingsButton(button, index) {
+        button.dataset.line = String(index);
+        const settings = lineSettings.get(index);
+        const preview = (lines[index] || '').slice(0, 160).replace(/<\/?[A-Za-z][^>]*>/g, '')
+            .replace(/\s+/g, ' ').trim().slice(0, 50);
+        const detail = settings ? `${settings.speed.toFixed(1)}x, pitch ${settings.pitch}` : 'គោល ឬ Tag';
+        button.dataset.custom = String(Boolean(settings));
+        button.setAttribute('aria-label', `កំណត់ល្បឿន និង pitch សម្រាប់ជួរទី ${index + 1}: ${preview} (${detail})`);
+        button.title = `ល្បឿន និង pitch សម្រាប់ជួរទី ${index + 1} (${detail})`;
+    }
+
+    function createSettingsButton(index) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'line-settings-button';
+        button.textContent = '⚙️';
+        button.setAttribute('aria-haspopup', 'dialog');
+        button.addEventListener('click', () => openLineSettings?.(Number(button.dataset.line), button));
+        updateSettingsButton(button, index);
+        return button;
+    }
+
+    function isSpokenLine(index) {
+        return Number.isInteger(index) && index >= 0 && index < lines.length &&
+            !isSrtMetadata(lines, index) && hasSpokenText(lines[index]);
+    }
+
+    function setLineSettings(index, settings) {
+        if (!isSpokenLine(index) || !Number.isFinite(settings?.speed) || settings.speed < 0.5 || settings.speed > 2 ||
+            !Number.isInteger(settings.pitch) || settings.pitch < -10 || settings.pitch > 10) return false;
+        lineSettings.set(index, { speed: settings.speed, pitch: settings.pitch });
+        const button = settingsButtons.get(index);
+        if (button) updateSettingsButton(button, index);
+        status.textContent = `ជួរទី ${index + 1}៖ ល្បឿន ${settings.speed.toFixed(1)}x, pitch ${settings.pitch}`;
+        return true;
+    }
+
+    function resetLineSettings(index) {
+        if (!isSpokenLine(index)) return false;
+        lineSettings.delete(index);
+        const button = settingsButtons.get(index);
+        if (button) updateSettingsButton(button, index);
+        status.textContent = `ជួរទី ${index + 1}៖ ប្រើល្បឿន និង pitch គោល ឬ Tag`;
+        return true;
+    }
+
     function render() {
         frame = 0;
         const style = getComputedStyle(editor);
@@ -162,59 +211,117 @@ export function createLineVoiceControls({ editor, gutter, mirror, resetButton, s
             mirror.textContent = previousValue + '\u200B'; // Measure the final empty line too.
             mirroredValue = previousValue;
         }
-        const mirrorTop = mirror.getBoundingClientRect().top;
+        const mirrorRect = mirror.getBoundingClientRect();
         const paddingTop = parseFloat(style.paddingTop);
+        const paddingLeft = parseFloat(style.paddingLeft);
         const positions = new Map();
+        const endPositions = new Map();
+        const topFromRect = rect => paddingTop + rect.top - mirrorRect.top + (rect.height - BUTTON_HEIGHT) / 2;
         function positionOf(index) {
             if (positions.has(index)) return positions.get(index);
             const start = starts[index];
             const codePoint = previousValue.codePointAt(start);
             range.setStart(mirror.firstChild, start);
             range.setEnd(mirror.firstChild, start + (codePoint > 0xffff ? 2 : 1));
-            const rect = range.getBoundingClientRect();
-            const top = paddingTop + rect.top - mirrorTop + (rect.height - BUTTON_HEIGHT) / 2;
+            const top = topFromRect(range.getBoundingClientRect());
             positions.set(index, top);
             return top;
+        }
+        function endOf(index) {
+            if (endPositions.has(index)) return endPositions.get(index);
+            const end = starts[index] + lines[index].trimEnd().length;
+            range.setStart(mirror.firstChild, end);
+            range.setEnd(mirror.firstChild, end);
+            let rect = range.getBoundingClientRect();
+            let x = rect.left;
+            // A few browsers do not return a caret rectangle at the end of text.
+            if (!rect.height && end > starts[index]) {
+                const last = previousValue.charCodeAt(end - 1);
+                const size = last >= 0xdc00 && last <= 0xdfff ? 2 : 1;
+                range.setStart(mirror.firstChild, end - size);
+                range.setEnd(mirror.firstChild, end);
+                rect = range.getBoundingClientRect();
+                x = rect.right;
+            }
+            const top = rect.height ? topFromRect(rect) : positionOf(index);
+            const edge = paddingLeft + x - mirrorRect.left;
+            const desiredLeft = style.direction === 'rtl' ? edge - BUTTON_HEIGHT - 5 : edge + 5;
+            const left = Math.max(paddingLeft, Math.min(editor.clientWidth - BUTTON_HEIGHT - 4, desiredLeft));
+            const result = { top, left };
+            endPositions.set(index, result);
+            return result;
         }
 
         const visibleTop = editor.scrollTop;
         const visibleBottom = visibleTop + editor.clientHeight;
         let low = 0;
         let high = lines.length;
+        // A wrapped line can begin above the viewport but end inside it.
         while (low < high) {
             const middle = Math.floor((low + high) / 2);
-            if (positionOf(middle) + BUTTON_HEIGHT < visibleTop) low = middle + 1;
+            if (endOf(middle).top + BUTTON_HEIGHT < visibleTop) low = middle + 1;
             else high = middle;
         }
 
-        const visible = new Set();
+        const visibleRows = new Set();
+        const visibleSettings = new Set();
         for (let index = low; index < lines.length; index++) {
             const top = positionOf(index);
             if (top > visibleBottom) break;
-            if (isSrtMetadata(lines, index) || !hasSpokenText(lines[index])) continue;
-            visible.add(index);
-            let row = rows.get(index);
-            if (!row) {
-                row = createRow(index);
-                rows.set(index, row);
-                const next = Array.from(gutter.children).find(child => Number(child.dataset.line) > index);
-                gutter.insertBefore(row, next || null);
-            } else updateRow(row, index);
-            row.style.top = `${top - visibleTop}px`;
+            if (!isSpokenLine(index)) continue;
+            if (top + BUTTON_HEIGHT >= visibleTop) {
+                visibleRows.add(index);
+                let row = rows.get(index);
+                if (!row) {
+                    row = createRow(index);
+                    rows.set(index, row);
+                    const next = Array.from(gutter.children).find(child => Number(child.dataset.line) > index);
+                    gutter.insertBefore(row, next || null);
+                } else updateRow(row, index);
+                row.style.top = `${top - visibleTop}px`;
+            }
+            const end = endOf(index);
+            if (settingsLayer && end.top + BUTTON_HEIGHT >= visibleTop && end.top <= visibleBottom) {
+                visibleSettings.add(index);
+                let button = settingsButtons.get(index);
+                if (!button) {
+                    button = createSettingsButton(index);
+                    settingsButtons.set(index, button);
+                    const next = Array.from(settingsLayer.children).find(child => Number(child.dataset.line) > index);
+                    settingsLayer.insertBefore(button, next || null);
+                } else updateSettingsButton(button, index);
+                button.style.top = `${end.top - visibleTop}px`;
+                button.style.left = `${end.left}px`;
+            }
         }
         for (const [index, row] of rows) {
-            if (!visible.has(index)) {
+            if (!visibleRows.has(index)) {
                 row.remove();
                 rows.delete(index);
             }
         }
+        for (const [index, button] of settingsButtons) {
+            if (!visibleSettings.has(index)) {
+                button.remove();
+                settingsButtons.delete(index);
+            }
+        }
     }
 
-    function reset() {
+    function resetVoices() {
         choices = new Map();
         for (const [index, row] of rows) updateRow(row, index);
-        status.textContent = '';
         updateResetButton();
+    }
+
+    // Used on document replacement and Clear; voice-only reset is independent.
+    function reset() {
+        resetVoices();
+        lineSettings = new Map();
+        revision++;
+        onDocumentChange?.();
+        for (const [index, button] of settingsButtons) updateSettingsButton(button, index);
+        status.textContent = '';
         scheduleRender();
     }
 
@@ -226,8 +333,11 @@ export function createLineVoiceControls({ editor, gutter, mirror, resetButton, s
         const nextLines = nextValue.split('\n');
         const replacedAll = beforeInput && previousValue.length > 0 && beforeInput.start === 0 &&
             beforeInput.end === previousValue.length && beforeInput.type.startsWith('insert') && nextValue !== previousValue;
-        const edit = choices.size ? selectionEdit(previousValue, nextValue, starts, beforeInput) : null;
+        const edit = choices.size || lineSettings.size ? selectionEdit(previousValue, nextValue, starts, beforeInput) : null;
         choices = replacedAll ? new Map() : reconcileLineVoices(lines, nextLines, choices, edit);
+        lineSettings = replacedAll ? new Map() : reconcileLineVoices(lines, nextLines, lineSettings, edit);
+        const changed = nextValue !== previousValue;
+        if (changed) revision++;
         beforeInput = null;
         previousValue = nextValue;
         lines = nextLines;
@@ -235,12 +345,15 @@ export function createLineVoiceControls({ editor, gutter, mirror, resetButton, s
         // Old buttons must not target stale line numbers before the next paint.
         for (const row of rows.values()) row.remove();
         rows.clear();
+        for (const button of settingsButtons.values()) button.remove();
+        settingsButtons.clear();
+        if (changed) onDocumentChange?.();
         updateResetButton();
         scheduleRender();
     });
     editor.addEventListener('scroll', scheduleRender, { passive: true });
     resetButton.addEventListener('click', () => {
-        reset();
+        resetVoices();
         status.textContent = 'ប្រើសំឡេងគោល ឬ Tag សម្រាប់គ្រប់ជួរ';
     });
     if (typeof ResizeObserver !== 'undefined') new ResizeObserver(scheduleRender).observe(editor);
@@ -249,5 +362,12 @@ export function createLineVoiceControls({ editor, gutter, mirror, resetButton, s
     updateResetButton();
     scheduleRender();
 
-    return { getChoices: () => new Map(choices), reset };
+    return {
+        getChoices: () => new Map(choices),
+        getSettings: () => new Map(Array.from(lineSettings, ([index, value]) => [index, { ...value }])),
+        getRevision: () => revision,
+        setLineSettings,
+        resetLineSettings,
+        reset,
+    };
 }

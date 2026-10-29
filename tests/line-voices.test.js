@@ -71,10 +71,11 @@ test('editor controls select voices, track edits and clear on document replaceme
     }
     remove() { this.parent.children.splice(this.parent.children.indexOf(this), 1); }
     get firstChild() { return this; }
-    getBoundingClientRect() { return { top: 0 }; }
+    getBoundingClientRect() { return { top: 0, left: 0 }; }
   }
   const editor = new Element();
   const gutter = new Element();
+  const settingsLayer = new Element();
   const mirror = new Element();
   const resetButton = new Element();
   const status = new Element();
@@ -86,7 +87,9 @@ test('editor controls select voices, track edits and clear on document replaceme
       setStart(_node, start) { this.start = start; },
       setEnd() {},
       getBoundingClientRect() {
-        return { top: mirror.textContent.slice(0, this.start).split('\n').length * 36 - 28, height: 19 };
+        const before = mirror.textContent.slice(0, this.start);
+        const left = before.split('\n').at(-1).length * 8;
+        return { top: before.split('\n').length * 36 - 28, height: 19, left, right: left };
       },
     }),
   };
@@ -100,10 +103,25 @@ test('editor controls select voices, track edits and clear on document replaceme
   globalThis.ResizeObserver = undefined;
   const flush = () => { while (frames.length) frames.shift()(); };
   const row = line => gutter.children.find(element => Number(element.dataset.line) === line);
+  const gear = line => settingsLayer.children.find(element => Number(element.dataset.line) === line);
+  const opened = [];
+  let changes = 0;
   try {
-    const controls = createLineVoiceControls({ editor, gutter, mirror, resetButton, status });
+    const controls = createLineVoiceControls({ editor, gutter, settingsLayer, mirror, resetButton, status,
+      openLineSettings: (line, button) => opened.push([line, button]), onDocumentChange: () => changes++ });
     flush();
     assert.deepEqual(gutter.children.map(element => Number(element.dataset.line)), [2, 6]);
+    assert.deepEqual(settingsLayer.children.map(element => Number(element.dataset.line)), [2, 6]);
+    gear(2).emit('click');
+    assert.deepEqual(opened, [[2, gear(2)]]);
+    assert.equal(controls.setLineSettings(2, { speed: 1.4, pitch: -3 }), true);
+    assert.equal(gear(2).dataset.custom, 'true');
+    assert.match(gear(2).attributes['aria-label'], /1.4x, pitch -3/);
+    assert.equal(controls.setLineSettings(1, { speed: 1, pitch: 0 }), false); // Timestamp.
+    assert.equal(controls.setLineSettings(2, { speed: 2.5, pitch: 0 }), false);
+    const copied = controls.getSettings();
+    copied.get(2).speed = 0.5;
+    assert.equal(controls.getSettings().get(2).speed, 1.4);
     row(2).children[1].emit('click');
     row(6).children[0].emit('click');
     assert.deepEqual([...controls.getChoices()], [[2, 'sreymom'], [6, 'piseth']]);
@@ -116,7 +134,17 @@ test('editor controls select voices, track edits and clear on document replaceme
     editor.emit('input');
     flush();
     assert.deepEqual([...controls.getChoices()], [[3, 'sreymom'], [7, 'piseth']]);
+    assert.deepEqual([...controls.getSettings()], [[3, { speed: 1.4, pitch: -3 }]]);
+    assert.equal(controls.getRevision(), 1);
+    assert.equal(changes, 1);
     assert.equal(row(3).children[1].attributes['aria-pressed'], 'true');
+    assert.equal(gear(3).dataset.custom, 'true');
+    resetButton.emit('click');
+    assert.equal(controls.getChoices().size, 0);
+    assert.equal(controls.getSettings().get(3).speed, 1.4); // Voice reset is independent.
+    assert.equal(controls.resetLineSettings(3), true);
+    assert.equal(gear(3).dataset.custom, 'false');
+    controls.setLineSettings(3, { speed: 1.4, pitch: -3 });
 
     editor.selectionStart = 0;
     editor.selectionEnd = editor.value.length;
@@ -125,6 +153,7 @@ test('editor controls select voices, track edits and clear on document replaceme
     editor.emit('input');
     flush();
     assert.equal(controls.getChoices().size, 0);
+    assert.equal(controls.getSettings().size, 0);
     assert.equal(resetButton.disabled, true);
     row(0).children[0].emit('click');
     resetButton.emit('click');
@@ -141,4 +170,19 @@ test('editor controls select voices, track edits and clear on document replaceme
       else globalThis[name] = value;
     }
   }
+});
+
+test('speed and pitch choices reconcile on split, join, repeated lines and metadata edits', () => {
+  const first = { speed: 1.3, pitch: -2 };
+  const second = { speed: 0.8, pitch: 4 };
+  const settings = new Map([[0, first], [1, second]]);
+  assert.deepEqual([...reconcileLineVoices(['hello', 'next'], ['hel', 'lo', 'next'], settings)], [
+    [0, first], [1, first], [2, second],
+  ]);
+  assert.deepEqual([...reconcileLineVoices(['hello', 'next'], ['hellonext'], settings)], [[0, first]]);
+  assert.deepEqual([...reconcileLineVoices(['A', 'A'], ['A', 'A', 'A'], settings,
+    { startLine: 0, endLine: 0, startColumn: 0, endColumn: 0 })], [[1, first], [2, second]]);
+  const oldLines = ['1', '00:00:01,000 --> 00:00:03,000', 'hello'];
+  const nextLines = ['', '1', '00:00:01,000 --> 00:00:03,000', 'hello'];
+  assert.deepEqual([...reconcileLineVoices(oldLines, nextLines, new Map([[2, first]]))], [[3, first]]);
 });

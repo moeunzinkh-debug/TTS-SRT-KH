@@ -28,9 +28,9 @@ export function splitDialogue(value) {
         .filter(Boolean);
 }
 
-export function buildVoiceParts(value, currentVoiceId, voiceConfigs, tagConfigs, lineVoices) {
-    if (lineVoices?.size) {
-        return buildLineVoiceParts(value, currentVoiceId, voiceConfigs, tagConfigs, lineVoices);
+export function buildVoiceParts(value, currentVoiceId, voiceConfigs, tagConfigs, lineVoices, lineSettings, autoSpeed = false) {
+    if (lineVoices?.size || lineSettings?.size) {
+        return buildLineVoiceParts(value, currentVoiceId, voiceConfigs, tagConfigs, lineVoices, lineSettings, autoSpeed);
     }
     const text = stripSrtMetadata(value);
     const parts = [];
@@ -58,10 +58,10 @@ export function buildVoiceParts(value, currentVoiceId, voiceConfigs, tagConfigs,
     return parts;
 }
 
-// Override the voice for complete source lines without changing the user's text.
-// Existing inline tags continue to work on all lines without an override, even
-// when a tag spans several lines. SRT metadata is never assigned a voice.
-function buildLineVoiceParts(value, currentVoiceId, voiceConfigs, tagConfigs, lineVoices) {
+// Apply line-level voice and prosody without changing the user's text. Existing
+// inline tags continue to work on lines without an override, even across lines.
+// SRT metadata is never assigned a voice.
+function buildLineVoiceParts(value, currentVoiceId, voiceConfigs, tagConfigs, lineVoices, lineSettings, autoSpeed, observe) {
     const source = value.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n');
     const retained = [];
     let offset = 0;
@@ -85,16 +85,19 @@ function buildLineVoiceParts(value, currentVoiceId, voiceConfigs, tagConfigs, li
         return low;
     };
 
-    const append = (chunk, voiceName, speed, pitch) => {
+    const append = (chunk, voiceName, speed, pitch, autoSpeedOverride) => {
         if (!chunk) return;
         const previous = parts[parts.length - 1];
         // Keep separators without creating empty parts or needless voice changes.
         if (!chunk.trim()) {
             if (previous) previous.text += chunk;
-        } else if (previous && previous.voiceName === voiceName && previous.speed === speed && previous.pitch === pitch) {
+        } else if (previous && previous.voiceName === voiceName && previous.speed === speed &&
+            previous.pitch === pitch && previous.autoSpeed === autoSpeedOverride) {
             previous.text += chunk;
         } else {
-            parts.push({ text: chunk, voiceName, speed, pitch });
+            const part = { text: chunk, voiceName, speed, pitch };
+            if (autoSpeedOverride !== undefined) part.autoSpeed = autoSpeedOverride;
+            parts.push(part);
         }
     };
 
@@ -105,13 +108,18 @@ function buildLineVoiceParts(value, currentVoiceId, voiceConfigs, tagConfigs, li
         while (position < run.length) {
             const newline = run.indexOf('\n', position);
             const end = newline < 0 ? run.length : newline + 1;
-            const selected = lineVoices.get(retained[line].index);
+            const sourceIndex = retained[line].index;
+            const selected = lineVoices?.get(sourceIndex);
             const selectedConfig = voiceConfigs[selected];
-            if (selectedConfig) {
-                append(run.slice(position, end), selected, selectedConfig.speed, selectedConfig.pitch);
-            } else {
-                append(run.slice(position, end), voiceName, speed, pitch);
-            }
+            const baseVoice = selectedConfig ? selected : voiceName;
+            const baseSpeed = selectedConfig ? selectedConfig.speed : speed;
+            const basePitch = selectedConfig ? selectedConfig.pitch : pitch;
+            const chunk = run.slice(position, end);
+            observe?.(sourceIndex, chunk, { voiceName: baseVoice, speed: baseSpeed, pitch: basePitch });
+            const custom = lineSettings?.get(sourceIndex);
+            // Explicit line settings must not be changed by global Auto Speed.
+            append(chunk, baseVoice, custom?.speed ?? baseSpeed, custom?.pitch ?? basePitch,
+                custom && autoSpeed ? false : undefined);
             position = end;
             if (newline >= 0) line++;
         }
@@ -133,4 +141,25 @@ function buildLineVoiceParts(value, currentVoiceId, voiceConfigs, tagConfigs, li
     }
     appendRun(text.slice(lastIndex), lastIndex, currentVoiceId, main.speed, main.pitch);
     return parts.map(part => ({ ...part, text: part.text.trim() })).filter(part => part.text);
+}
+
+// Show the first spoken segment's inherited values when opening a line's
+// settings. Existing line choices take precedence over inline voice tags.
+export function getLineInheritedSettings(value, lineIndex, currentVoiceId, voiceConfigs, tagConfigs, lineVoices) {
+    const selected = lineVoices?.get(lineIndex);
+    const fallback = voiceConfigs[selected] || voiceConfigs[currentVoiceId] || { speed: 1, pitch: 0 };
+    let inherited;
+    if (!voiceConfigs[selected] && value.includes('<')) {
+        buildLineVoiceParts(value, currentVoiceId, voiceConfigs, tagConfigs, lineVoices, undefined, false,
+            (index, chunk, settings) => {
+                if (!inherited && index === lineIndex && hasSpokenText(chunk)) inherited = settings;
+            });
+    }
+    const candidate = inherited || fallback;
+    return {
+        speed: Number.isFinite(candidate.speed) && candidate.speed >= 0.5 && candidate.speed <= 2
+            ? candidate.speed : fallback.speed,
+        pitch: Number.isInteger(candidate.pitch) && candidate.pitch >= -10 && candidate.pitch <= 10
+            ? candidate.pitch : fallback.pitch,
+    };
 }

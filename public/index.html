@@ -40,7 +40,7 @@
             height: 300px; /* កម្ពស់ដើម */
             min-height: 150px;
             max-height: 800px;
-            padding: 1.25rem 0.75rem 1.25rem 5.25rem;
+            padding: 1.25rem 3rem 1.25rem 5.25rem;
             border: 1px solid #cbd5e1;
             border-radius: 1rem;
             background-color: #f8fafc;
@@ -110,6 +110,36 @@
         .dark .voice-line-button { background: #475569; border-color: #64748b; color: #f1f5f9; }
         .dark .voice-line-button[data-voice="piseth"][aria-pressed="true"] { background: #15803d; color: white; }
         .dark .voice-line-button[data-voice="sreymom"][aria-pressed="true"] { background: #be185d; color: white; }
+
+        /* The gear follows the last visible character of each source line. */
+        .line-settings-layer {
+            position: absolute;
+            inset: 1px;
+            overflow: hidden;
+            pointer-events: none;
+        }
+        .line-settings-button {
+            position: absolute;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            border: 1px solid #cbd5e1;
+            border-radius: 0.6rem;
+            background: #e2e8f0;
+            color: #334155;
+            font-size: 16px;
+            line-height: 1;
+            cursor: pointer;
+            pointer-events: auto;
+        }
+        .line-settings-button:hover { background: #cbd5e1; }
+        .line-settings-button:focus-visible { outline: 2px solid #4f46e5; outline-offset: 1px; }
+        .line-settings-button[data-custom="true"] { background: #c7d2fe; border-color: #6366f1; }
+        .dark .line-settings-button { background: #475569; border-color: #64748b; color: #f8fafc; }
+        .dark .line-settings-button[data-custom="true"] { background: #4338ca; border-color: #a5b4fc; }
+        .settings-card { width: min(20rem, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); overflow-y: auto; }
         #voice-line-mirror {
             position: fixed;
             top: 0;
@@ -233,12 +263,13 @@
             <section class="space-y-2">
                 <div class="flex flex-wrap items-center justify-between gap-2">
                     <label for="editor" class="text-sm font-bold text-slate-800 dark:text-slate-200">អត្ថបទ / SRT</label>
-                    <button type="button" id="line-voice-reset" disabled class="text-xs font-bold text-indigo-600 dark:text-indigo-300 hover:underline disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed">ដកជម្រើសតាមជួរទាំងអស់</button>
+                    <button type="button" id="line-voice-reset" disabled class="text-xs font-bold text-indigo-600 dark:text-indigo-300 hover:underline disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed">ដកសំឡេងប្រុស/ស្រីគ្រប់ជួរ</button>
                 </div>
-                <p id="line-voice-help" class="text-xs leading-relaxed text-slate-500 dark:text-slate-400">ចុច ♂ ប្រុស ឬ ♀ ស្រី នៅមុខជួរនីមួយៗ។ ជួរដែលមិនជ្រើសប្រើសំឡេងគោល ឬ Tag; ចុចម្ដងទៀតដើម្បីដកជម្រើស។</p>
+                <p id="line-voice-help" class="text-xs leading-relaxed text-slate-500 dark:text-slate-400">ចុច ♂ ប្រុស ឬ ♀ ស្រី នៅមុខជួរ និង ⚙️ នៅចុងជួរ ដើម្បីកំណត់ល្បឿន និង pitch។ ជួរដែលមិនកំណត់ប្រើតម្លៃគោល ឬ Tag។</p>
                 <div class="relative group">
                     <textarea id="editor" class="text-input-area" aria-describedby="line-voice-help" placeholder="បិទភ្ជាប់អត្ថបទ SRT នៅទីនេះ...&#10;ឧទាហរណ៍៖&#10;1&#10;00:00:01,000 --> 00:00:04,000&#10;សួស្តីមិត្តភក្តិទាំងអស់គ្នា"></textarea>
                     <div id="voice-line-gutter" class="voice-line-gutter" role="group" aria-label="ជ្រើសសំឡេងប្រុស ឬស្រីតាមជួរ"></div>
+                    <div id="line-settings-layer" class="line-settings-layer" role="group" aria-label="កំណត់ល្បឿន និង pitch តាមជួរ"></div>
                     <div id="voice-line-mirror" aria-hidden="true"></div>
                 </div>
                 <span id="line-voice-status" class="sr-only" aria-live="polite"></span>
@@ -287,27 +318,29 @@
         </div>
     </div>
 
-    <div id="settings-modal" class="fixed inset-0 bg-black/60 hidden flex items-center justify-center z-[100] backdrop-blur-sm">
-        <div class="bg-white dark:bg-slate-800 rounded-[2rem] w-80 p-8 shadow-2xl text-center">
-            <h3 class="font-bold text-lg mb-1 dark:text-white">កំណត់សំឡេង</h3>
+    <div id="settings-modal" class="fixed inset-0 bg-black/60 hidden flex items-center justify-center z-[100] backdrop-blur-sm" onclick="if (event.target === this) closeSettings()">
+        <div role="dialog" aria-modal="true" aria-labelledby="settings-heading" aria-describedby="modal-title" class="settings-card bg-white dark:bg-slate-800 rounded-[2rem] p-8 shadow-2xl text-center">
+            <h3 id="settings-heading" class="font-bold text-lg mb-1 dark:text-white">កំណត់សំឡេង</h3>
             <p id="modal-title" class="text-indigo-600 dark:text-indigo-400 text-sm font-bold mb-6"></p>
             <div class="space-y-6 text-left">
                 <input type="hidden" id="target-id">
                 <div>
                     <div class="flex justify-between text-[11px] font-black text-slate-500 dark:text-slate-400 uppercase mb-2">
-                        <span>ល្បឿន</span> <span id="speed-val" class="text-indigo-600 dark:text-indigo-400">1.0x</span>
+                        <label for="input-speed">ល្បឿន (Speed)</label> <span id="speed-val" class="text-indigo-600 dark:text-indigo-400">1.0x</span>
                     </div>
                     <input type="range" id="input-speed" min="0.5" max="2.0" step="0.1" value="1.0" class="w-full accent-indigo-600" oninput="updateVal('speed-val', this.value + 'x')">
                 </div>
                 <div>
                     <div class="flex justify-between text-[11px] font-black text-slate-500 dark:text-slate-400 uppercase mb-2">
-                        <span>កម្រិតសំឡេង</span> <span id="pitch-val" class="text-pink-600 dark:text-pink-400">0</span>
+                        <label for="input-pitch">កម្ពស់សំឡេង (Pitch)</label> <span id="pitch-val" class="text-pink-600 dark:text-pink-400">0</span>
                     </div>
                     <input type="range" id="input-pitch" min="-10" max="10" step="1" value="0" class="w-full accent-pink-600" oninput="updateVal('pitch-val', this.value)">
                 </div>
             </div>
-            <button onclick="saveSettings()" class="w-full mt-8 bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold">រក្សាទុក</button>
-            <button onclick="closeSettings()" class="w-full mt-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs py-2">បោះបង់</button>
+            <p id="line-settings-hint" class="hidden mt-4 text-xs leading-relaxed text-slate-500 dark:text-slate-400">តម្លៃនេះប្រើសម្រាប់តែជួរនេះ និងមានអាទិភាពលើ Auto Speed។</p>
+            <button type="button" id="settings-save" onclick="saveSettings()" class="w-full mt-8 bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold">រក្សាទុក</button>
+            <button type="button" id="line-settings-reset" onclick="resetLineSettings()" class="hidden w-full mt-2 text-indigo-600 dark:text-indigo-300 hover:underline text-xs py-2">ប្រើល្បឿន និង pitch គោល ឬ Tag</button>
+            <button type="button" id="settings-cancel" onclick="closeSettings()" class="w-full mt-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs py-2">បោះបង់</button>
         </div>
     </div>
 

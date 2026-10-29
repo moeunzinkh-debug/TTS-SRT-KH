@@ -1,4 +1,4 @@
-import { buildVoiceParts } from './text.js';
+import { buildVoiceParts, getLineInheritedSettings } from './text.js';
 import { createLineVoiceControls } from './line-voices.js';
 
 let currentVoiceId = 'piseth';
@@ -19,6 +19,8 @@ const tagConfigs = {
 
 // អថេរទុកចំណាំការ Highlight អត្ថបទពេលបើក Modal
 let selectedRange = { start: 0, end: 0, text: "" };
+let activeLineSettings = null;
+let modalReturnFocus = null;
 
 let isAutoSpeedActive = false;
 
@@ -79,9 +81,17 @@ document.addEventListener('DOMContentLoaded', () => {
     lineVoiceControls = createLineVoiceControls({
         editor: document.getElementById('editor'),
         gutter: document.getElementById('voice-line-gutter'),
+        settingsLayer: document.getElementById('line-settings-layer'),
         mirror: document.getElementById('voice-line-mirror'),
         resetButton: document.getElementById('line-voice-reset'),
         status: document.getElementById('line-voice-status'),
+        openLineSettings,
+        onDocumentChange: () => {
+            if (activeLineSettings) {
+                window.closeSettings();
+                document.getElementById('line-voice-status').textContent = 'អត្ថបទបានផ្លាស់ប្តូរ។ សូមបើកការកំណត់ជួរម្ដងទៀត។';
+            }
+        },
     });
 });
 
@@ -180,17 +190,35 @@ window.insertTag = (vId) => {
     });
 };
 
+function showSettings(title, target, settings, trigger = document.activeElement) {
+    modalReturnFocus = trigger;
+    const isLine = target === 'line';
+    for (const id of ['line-settings-reset', 'line-settings-hint']) {
+        if (isLine) document.getElementById(id).classList.remove('hidden');
+        else document.getElementById(id).classList.add('hidden');
+    }
+    document.getElementById('modal-title').innerText = title;
+    document.getElementById('input-speed').value = settings.speed;
+    document.getElementById('input-pitch').value = settings.pitch;
+    document.getElementById('target-id').value = target;
+    updateVal('speed-val', document.getElementById('input-speed').value + 'x');
+    updateVal('pitch-val', document.getElementById('input-pitch').value);
+    document.getElementById('settings-modal').classList.remove('hidden');
+    document.getElementById('input-speed').focus();
+}
+
+function openLineSettings(index, trigger) {
+    const editor = document.getElementById('editor');
+    const settings = lineVoiceControls.getSettings().get(index) ||
+        getLineInheritedSettings(editor.value, index, currentVoiceId, voiceConfigs, tagConfigs, lineVoiceControls.getChoices());
+    activeLineSettings = { index, revision: lineVoiceControls.getRevision() };
+    showSettings(`ជួរទី ${index + 1} (Speed & Pitch)`, 'line', settings, trigger);
+}
+
 // --- បើក Settings Modal សម្រាប់សំឡេងគោល ---
 window.openSettings = (id, name) => {
-    const s = voiceConfigs[id];
-    document.getElementById('modal-title').innerText = name + " (សំឡេងគោល)";
-    document.getElementById('input-speed').value = s.speed;
-    document.getElementById('input-pitch').value = s.pitch;
-    document.getElementById('target-id').value = 'main_' + id;
-    
-    updateVal('speed-val', s.speed + 'x');
-    updateVal('pitch-val', s.pitch);
-    document.getElementById('settings-modal').classList.remove('hidden');
+    activeLineSettings = null;
+    showSettings(name + ' (សំឡេងគោល)', 'main_' + id, voiceConfigs[id]);
 };
 
 // --- បើក Settings Modal សម្រាប់ Tag ---
@@ -218,19 +246,17 @@ window.openTagSettings = (id) => {
     }
 
     const name = id === 'piseth' ? 'Piseth' : 'Sreymom';
-    document.getElementById('modal-title').innerText = name + " (Tag Setting)";
-    document.getElementById('input-speed').value = defaultSpeed;
-    document.getElementById('input-pitch').value = defaultPitch;
-    document.getElementById('target-id').value = 'tag_' + id;
-    
-    updateVal('speed-val', defaultSpeed + 'x');
-    updateVal('pitch-val', defaultPitch);
-    document.getElementById('settings-modal').classList.remove('hidden');
+    activeLineSettings = null;
+    showSettings(name + ' (Tag Setting)', 'tag_' + id, { speed: defaultSpeed, pitch: defaultPitch });
 };
 
 window.updateVal = (id, val) => {
     document.getElementById(id).innerText = val;
 };
+
+function lineTargetIsCurrent() {
+    return activeLineSettings && lineVoiceControls && activeLineSettings.revision === lineVoiceControls.getRevision();
+}
 
 // --- រក្សាទុក Settings ---
 window.saveSettings = () => {
@@ -238,7 +264,11 @@ window.saveSettings = () => {
     const sp = parseFloat(document.getElementById('input-speed').value);
     const pt = parseFloat(document.getElementById('input-pitch').value);
 
-    if (id.startsWith('main_')) {
+    if (id === 'line') {
+        if (!lineTargetIsCurrent() || !lineVoiceControls.setLineSettings(activeLineSettings.index, { speed: sp, pitch: pt })) {
+            document.getElementById('line-voice-status').textContent = 'អត្ថបទបានផ្លាស់ប្តូរ។ សូមបើកការកំណត់ជួរម្ដងទៀត។';
+        }
+    } else if (id.startsWith('main_')) {
         const voiceId = id.replace('main_', '');
         voiceConfigs[voiceId].speed = sp;
         voiceConfigs[voiceId].pitch = pt;
@@ -279,9 +309,41 @@ window.saveSettings = () => {
     closeSettings();
 };
 
+window.resetLineSettings = () => {
+    if (lineTargetIsCurrent()) lineVoiceControls.resetLineSettings(activeLineSettings.index);
+    window.closeSettings();
+};
+
 window.closeSettings = () => {
     document.getElementById('settings-modal').classList.add('hidden');
+    activeLineSettings = null;
+    const target = modalReturnFocus;
+    modalReturnFocus = null;
+    if (target && target.isConnected !== false && typeof target.focus === 'function') target.focus();
+    else document.getElementById('editor').focus();
 };
+
+// Keep keyboard focus in the dialog and allow Escape to cancel.
+document.addEventListener('keydown', event => {
+    if (document.getElementById('settings-modal').classList.contains('hidden')) return;
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        window.closeSettings();
+    } else if (event.key === 'Tab') {
+        const ids = ['input-speed', 'input-pitch', 'settings-save'];
+        if (!document.getElementById('line-settings-reset').classList.contains('hidden')) ids.push('line-settings-reset');
+        ids.push('settings-cancel');
+        const items = ids.map(id => document.getElementById(id));
+        const current = items.indexOf(document.activeElement);
+        if (event.shiftKey && current <= 0) {
+            event.preventDefault();
+            items[items.length - 1].focus();
+        } else if (!event.shiftKey && (current === items.length - 1 || current < 0)) {
+            event.preventDefault();
+            items[0].focus();
+        }
+    }
+});
 
 // Read files locally; the text is only sent to the API when Generate is pressed.
 window.uploadTextFile = async (event) => {
@@ -357,7 +419,8 @@ window.generateAudio = async () => {
     document.getElementById('loader').classList.remove('hidden');
     document.getElementById('audio-container').classList.add('hidden');
 
-    const parts = buildVoiceParts(textValue, currentVoiceId, voiceConfigs, tagConfigs, lineVoiceControls?.getChoices());
+    const parts = buildVoiceParts(textValue, currentVoiceId, voiceConfigs, tagConfigs,
+        lineVoiceControls?.getChoices(), lineVoiceControls?.getSettings(), isAutoSpeedActive);
     const formData = new FormData();
     formData.append('data', JSON.stringify(parts));
     formData.append('autoSpeed', isAutoSpeedActive);
