@@ -50,7 +50,15 @@ test('Generate sends SRT voice parts and shows playable audio even when autoplay
 
 test('API errors are displayed, and a later success revokes the previous URL', async () => {
   globalThis.fetch = async () => Response.json({ detail: 'Edge TTS unavailable' }, { status: 502 });
-  await window.generateAudio();
+  const originalError = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    await window.generateAudio();
+  } finally {
+    console.error = originalError;
+  }
+  assert.match(logged[0][1].message, /Edge TTS unavailable/);
   assert.match(alerts.pop(), /Edge TTS unavailable/);
   assert.equal(element('convert-btn').disabled, false);
   assert.equal(element('loader').classList.contains('hidden'), true);

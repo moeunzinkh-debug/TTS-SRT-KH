@@ -20,34 +20,41 @@ npm run dev
 
 Worker ត្រូវការការតភ្ជាប់ទៅសេវា Edge TTS របស់ Microsoft ដើម្បីផលិតសំឡេង។ Static UI អាចបើកបាន ទោះជាការតភ្ជាប់នោះមិនមានក៏ដោយ។
 
-## Deploy to Cloudflare Workers
+## Deploy from the Cloudflare dashboard (Workers Builds)
 
-1. បង្កើត/បើក Workers និង `workers.dev` subdomain ក្នុង Cloudflare account។
-2. ពី repository នេះ៖
+Cloudflare ដំណើរការ build និង deploy ដោយផ្ទាល់។ GitHub គ្រាន់តែជាប្រភព repository ប៉ុណ្ណោះ; **មិនប្រើ GitHub Actions ឬ GitHub deployment secrets** ទេ។
 
-   ```bash
-   npm ci
-   npx wrangler login
-   npm run deploy
-   ```
+1. ក្នុង Cloudflare Dashboard បើក **Workers & Pages** → **Create application** → **GitHub** ហើយជ្រើស repository នេះ។ សម្រាប់ Worker ដែលមានរួច៖ បើក Worker → **Settings** → **Builds** → **Connect**។ បង្កើត `workers.dev` subdomain ប្រសិនបើមិនទាន់មាន។
+2. កំណត់ Workers Builds ដូចខាងក្រោម៖
 
-3. បើក `*.workers.dev` URL ដែល Wrangler បង្ហាញ។ ឈ្មោះ Worker លំនាំដើមគឺ `tts-srt-kh` ក្នុង `wrangler.toml`។ Worker មិនត្រូវការ TTS API key ឬ Python backend ទេ។
+   | Setting | Value |
+   | --- | --- |
+   | Production branch | `main` |
+   | Root directory | `/` (repository root) |
+   | Build command | `npm run build` |
+   | Deploy command | `npm run deploy` |
+   | Preview command | `npx wrangler preview` |
 
-### GitHub Actions: PR preview និង production
+   `.nvmrc` កំណត់ Node.js 22។ Workers Builds ដំឡើង npm dependencies ដោយស្វ័យប្រវត្តិ ហើយ `npm run build` រត់ tests និង Wrangler dry-run មុន deploy។ បើបានបិទ automatic dependency installation (`SKIP_DEPENDENCY_INSTALL=1`), ប្រើ `npm ci && npm run build` ជា build command ជំនួស។
+3. ឈ្មោះ Worker លំនាំដើមក្នុង `wrangler.toml` គឺ `tts-srt-kh`។ ប្រសិនបើភ្ជាប់ Worker ដែលមានឈ្មោះផ្សេង សូមកែ `name` ឱ្យត្រូវជាមួយឈ្មោះ Worker ក្នុង Cloudflare មុន deploy។ Worker មិនត្រូវការ TTS API key ឬ Python backend ទេ។
+4. ចុច **Save and Deploy** (ឬ trigger/retry build សម្រាប់ Worker ដែលមានរួច)។ មើល build logs ក្នុង **Deployments** → **View build history** ហើយបើក `*.workers.dev` URL។ Cloudflare Workers Builds គ្រប់គ្រង deployment authentication ក្នុង Cloudflare account។
 
-កំណត់ **repository Actions secrets** ក្នុង GitHub → Settings → Secrets and variables → Actions៖
+### PR previews
 
-- `CLOUDFLARE_API_TOKEN` — Cloudflare API token ដែលមាន Account **Workers Scripts: Edit** សម្រាប់ account នោះ (និង **Account Settings: Read** ប្រសិនបើ Wrangler ត្រូវការរក account)។
-- `CLOUDFLARE_ACCOUNT_ID` — Cloudflare account ID។
+ក្នុង Worker → **Settings** → **Build** → **Branch control**, បើក **Enable Preview Builds**។ Cloudflare នឹងប្រើ preview command សម្រាប់ branch ដែលមិនមែន `main`; មើល Preview URL ក្នុងផ្នែក **Previews** ឬ PR comment ប្រសិនបើ Git integration បានបើក comments។ សម្រាប់ Worker ចាស់ ដែលនៅប្រើ preview model ចាស់ សូមជ្រើស **Set up Worker Previews** ក្នុង Builds settings ជាមុន។
 
-Workflow `.github/workflows/cloudflare-worker.yml` ធ្វើដូចខាងក្រោម៖
+មុន PR នេះត្រូវ merge, `main` មិនទាន់មានការកែប្រែនេះទេ។ ដើម្បីសាកល្បងវាមុន production សូមបើក preview builds សម្រាប់ branch របស់ PR ហើយ push commit ឬ trigger build សម្រាប់ branch នោះ (អាចប្រើ Deploy Hook ក្នុង Cloudflare)។ ក្រោយ merge ទៅ `main` Cloudflare នឹង run production build/deploy។
 
-- PR ទៅ `main`: ដំណើរការ tests និង `wrangler deploy --dry-run`។ ប្រសិនបើ PR មកពី repository ដូចគ្នា និង secrets មានរួច វា deploy preview ដាច់ដោយឡែកជា `tts-srt-kh-pr-<number>` ហើយបង្ហាញ URL ក្នុង Actions job summary។ បើគ្មាន secrets វារំលង preview។
-- PR ពី fork និង Dependabot: test/dry-run ប៉ុណ្ណោះ មិនប្រើ deployment secrets។
-- ពេលបិទ PR: លុប preview Worker ប្រសិនបើមាន (មិនបង្ខំលុបបើ Worker ផ្សេងពឹងផ្អែកលើវា)។
-- Push/merge ទៅ `main` ឬ **Run workflow** លើ `main`: test រួច deploy production Worker។ Production job នឹងបង្ហាញ error ប្រសិនបើ secrets មិនទាន់កំណត់។
+### Manual deploy with Wrangler (optional)
 
-ប្រសិនបើប្តូរឈ្មោះ `tts-srt-kh` ក្នុង Wrangler សូមកែ prefix preview ក្នុង workflow ផងដែរ។ CI និង direct `wrangler deploy` គឺជាជម្រើសពីរ; ជៀសវាងការកំណត់ deployment automation ផ្សេងមកកាន់ Worker ឈ្មោះដូចគ្នា។
+```bash
+npm ci
+npx wrangler login
+npm run build
+npm run deploy
+```
+
+ពាក្យបញ្ជាទាំងនេះ run ពីកុំព្យូទ័រដែលអ្នក login Cloudflare រួច មិនមែន GitHub Actions ទេ។
 
 ## Optional Python / Docker server
 
