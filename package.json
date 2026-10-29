@@ -1,0 +1,23 @@
+{
+  "name": "tts-srt-kh",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "wrangler dev --ip 0.0.0.0",
+    "build": "npm test && wrangler deploy --dry-run",
+    "deploy": "wrangler deploy",
+    "preview": "wrangler preview",
+    "check:deploy": "wrangler deploy --dry-run",
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "node-edge-tts": "1.2.12"
+  },
+  "devDependencies": {
+    "wrangler": "4.155.0"
+  }
+}

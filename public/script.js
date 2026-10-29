@@ -1,4 +1,7 @@
+import { buildVoiceParts } from './text.js';
+
 let currentVoiceId = 'piseth';
+let audioObjectUrl = null;
 const voiceConfigs = {
     piseth: { speed: 1.0, pitch: 0, voice: "km-KH-PisethNeural", name: "Piseth" },
     sreymom: { speed: 1.0, pitch: 0, voice: "km-KH-SreymomNeural", name: "Sreymom" }
@@ -278,52 +281,14 @@ window.generateAudio = async () => {
         return;
     }
 
+    const button = document.getElementById('convert-btn');
+    if (button.disabled) return;
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
     document.getElementById('loader').classList.remove('hidden');
     document.getElementById('audio-container').classList.add('hidden');
 
-    const parts = [];
-    const tagRegex = /<(\w+)(?:[^>]*?speed=["']([^"']+)["'])?(?:[^>]*?pitch=["']([^"']+)["'])?[^>]*?>(.*?)<\/\1>/gs;
-    let lastIndex = 0;
-    let match;
-    
-    while ((match = tagRegex.exec(textValue)) !== null) {
-        const beforeText = textValue.substring(lastIndex, match.index).trim();
-        if (beforeText) {
-            parts.push({
-                text: beforeText,
-                voiceName: currentVoiceId,
-                speed: voiceConfigs[currentVoiceId].speed,
-                pitch: voiceConfigs[currentVoiceId].pitch
-            });
-        }
-        
-        const tagName = match[1];
-        const attrSpeed = match[2] ? parseFloat(match[2]) : (tagConfigs[tagName] ? tagConfigs[tagName].speed : 1.0);
-        const attrPitch = match[3] ? parseInt(match[3]) : (tagConfigs[tagName] ? tagConfigs[tagName].pitch : 0);
-        const tagText = match[4].trim();
-
-        if (tagText) {
-            parts.push({
-                text: tagText,
-                voiceName: tagName,
-                speed: attrSpeed,
-                pitch: attrPitch
-            });
-        }
-        
-        lastIndex = tagRegex.lastIndex;
-    }
-
-    const remainingText = textValue.substring(lastIndex).trim();
-    if (remainingText) {
-        parts.push({
-            text: remainingText,
-            voiceName: currentVoiceId,
-            speed: voiceConfigs[currentVoiceId].speed,
-            pitch: voiceConfigs[currentVoiceId].pitch
-        });
-    }
-
+    const parts = buildVoiceParts(textValue, currentVoiceId, voiceConfigs, tagConfigs);
     const formData = new FormData();
     formData.append('data', JSON.stringify(parts));
     formData.append('autoSpeed', isAutoSpeedActive);
@@ -335,24 +300,29 @@ window.generateAudio = async () => {
         });
 
         if (!response.ok) {
-            throw new Error('មានបញ្ហាក្នុងការផលិតសំឡេង');
+            const body = await response.json().catch(() => ({}));
+            throw new Error(typeof body.detail === 'string'
+                ? body.detail : 'មានបញ្ហាក្នុងការផលិតសំឡេង');
         }
 
         const blob = await response.blob();
-        const audioUrl = URL.createObjectURL(blob);
-        
+        if (!blob.size) throw new Error('Edge TTS មិនបានបង្កើតសំឡេងទេ');
+        if (audioObjectUrl) URL.revokeObjectURL(audioObjectUrl);
+        audioObjectUrl = URL.createObjectURL(blob);
+
         const audioPlayer = document.getElementById('audio-player');
         const downloadLink = document.getElementById('download-link');
-        
-        audioPlayer.src = audioUrl;
-        downloadLink.href = audioUrl;
-        
-        document.getElementById('loader').classList.add('hidden');
+        audioPlayer.src = audioObjectUrl;
+        downloadLink.href = audioObjectUrl;
         document.getElementById('audio-container').classList.remove('hidden');
-        audioPlayer.play();
+        // Autoplay can be blocked; the user can still press Play.
+        audioPlayer.play().catch(() => {});
     } catch (error) {
         console.error('Error generating audio:', error);
         alert('កើតមានកំហុស៖ ' + error.message);
+    } finally {
         document.getElementById('loader').classList.add('hidden');
+        button.disabled = false;
+        button.removeAttribute('aria-busy');
     }
 };
