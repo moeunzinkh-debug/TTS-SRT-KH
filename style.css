@@ -1,0 +1,154 @@
+/* នាំចូល Font ខ្មែរ */
+@import url('https://fonts.googleapis.com/css2?family=Kantumruy+Pro:wght@400;700&display=swap');
+
+/* កំណត់ទម្រង់ទូទៅ */
+body { 
+    font-family: 'Kantumruy Pro', sans-serif; 
+    background-color: #f1f5f9; 
+    margin: 0;
+    padding: 0;
+}
+
+/* កំណត់ពណ៌នៅពេលយើង Highlight (Select) លើអត្ថបទ */
+::selection { 
+    background-color: #2563eb !important; 
+    color: #ffffff !important; 
+}
+::-moz-selection { 
+    background-color: #2563eb !important; 
+    color: #ffffff !important; 
+}
+
+/* រចនាប័ទ្មសម្រាប់ប្រអប់បញ្ចូលអត្ថបទ (Textarea) */
+#editor {
+    width: 100%;
+    min-height: 250px;
+    padding: 1.25rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 1.25rem;
+    background-color: #f8fafc;
+    outline: none;
+    line-height: 1.8;
+    font-size: 16px;
+    font-family: 'Kantumruy Pro', sans-serif;
+    color: #1e293b;
+    resize: vertical; /* អនុញ្ញាតឱ្យមេទាញពង្រីកចុះក្រោមដោយដៃ */
+    overflow-y: auto;
+    transition: border-color 0.2s, box-shadow 0.2s, background-color 0.3s, color 0.3s;
+    display: block;
+    scroll-behavior: smooth;
+}
+
+#editor:focus {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1);
+}
+
+/* Dark Mode សម្រាប់ Editor */
+.dark #editor {
+    background-color: #334155;
+    border-color: #475569;
+    color: #f1f5f9;
+    caret-color: #818cf8;
+}
+
+.dark #editor:focus {
+    border-color: #818cf8;
+    box-shadow: 0 0 0 4px rgba(129, 140, 248, 0.1);
+}
+
+.dark #editor::placeholder {
+    color: #94a3b8;
+}
+
+#editor::placeholder {
+    color: #94a3b8;
+    opacity: 1;
+}
+
+#editor::-webkit-scrollbar {
+    width: 8px;
+}
+#editor::-webkit-scrollbar-track {
+    background: transparent;
+}
+#editor::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 10px;
+}
+.dark #editor::-webkit-scrollbar-thumb {
+    background: #475569;
+}
+#editor::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+/* Loader Animation */
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+.animate-spin {
+    animation: spin 1s linear infinite;
+}
+
+/* ការកំណត់សម្រាប់ Modal */
+#settings-modal {
+    transition: opacity 0.3s ease;
+}
+
+/* កែសម្រួល Range Input (របារអូស) ឱ្យស្អាត */
+input[type="range"] {
+    -webkit-appearance: none;
+    width: 100%;
+    height: 6px;
+    background: #e2e8f0;
+    border-radius: 5px;
+}
+
+.dark input[type="range"] {
+    background: #475569;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    background: #4f46e5;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.dark input[type="range"]::-webkit-slider-thumb {
+    background: #818cf8;
+}
+
+/* រចនាប័ទ្មសម្រាប់ Tag Indicators */
+.tag-indicator {
+    font-size: 9px;
+    padding: 1px 4px;
+    border-radius: 4px;
+    background-color: #dbeafe;
+    color: #1d4ed8;
+    margin-left: 2px;
+}
+
+.dark .tag-indicator {
+    background-color: #1e3a8a;
+    color: #93c5fd;
+}
+
+/* រចនាប័ទ្មសម្រាប់ Main Indicators */
+.main-indicator {
+    font-size: 9px;
+    padding: 1px 4px;
+    border-radius: 4px;
+    background-color: #dcfce7;
+    color: #166534;
+    margin-left: 2px;
+}
+
+.dark .main-indicator {
+    background-color: #14532d;
+    color: #86efac;
+}

@@ -1,0 +1,38 @@
+FROM python:3.9-slim
+
+# ១. ដំឡើង dependencies ក្នុងនាមជា Root (ទុកតែ FFmpeg សម្រាប់ Audio Processing)
+USER root
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# ២. បង្កើត User (HF តម្រូវឱ្យប្រើ UID 1000)
+RUN useradd -m -u 1000 user
+USER user
+ENV HOME=/home/user \
+    PATH=/home/user/.local/bin:$PATH
+
+WORKDIR $HOME/app
+
+# ៣. ដំឡើង Python dependencies
+COPY --chown=user requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir --upgrade -r requirements.txt
+
+# ៤. ចម្លង File ទាំងអស់
+COPY --chown=user . $HOME/app
+
+# ៥. បង្កើត public folder សម្រាប់ static files
+RUN mkdir -p public && \
+    mv index.html style.css script.js service-worker.js manifest.json public/ 2>/dev/null || true
+
+# ៦. បង្កើត Folder សម្រាប់ទុកសំឡេង
+RUN mkdir -p output_audio && \
+    chmod 755 output_audio
+
+# ៧. ពិនិត្យ ffmpeg ដែលបានដំឡើង
+RUN which ffmpeg && ffmpeg -version | head -1
+
+# ៨. ដំណើរការ App
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7860"]

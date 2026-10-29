@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="km" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#4f46e5">
+    <meta name="description" content="បង្កើតសំឡេង AI ពីអត្ថបទ SRT">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Voice Studio">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%234f46e5' width='192' height='192'/><text x='50%' y='50%' font-size='80' font-weight='bold' fill='white' text-anchor='middle' dominant-baseline='middle'>🎤</text></svg>">
+    <title>SRT Smart Voice Studio (Edge TTS)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: {
+                            bg: '#0f172a',
+                            card: '#1e293b',
+                            text: '#f1f5f9'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Kantumruy+Pro:wght@400;700&display=swap');
+        
+        body { font-family: 'Kantumruy Pro', sans-serif; }
+        
+        /* កែសម្រួលប្រអប់អត្ថបទ៖ មិនឱ្យរីកស្វ័យប្រវត្តិ និងអាចទាញបាន */
+        .text-input-area {
+            width: 100%;
+            height: 300px; /* កម្ពស់ដើម */
+            min-height: 150px;
+            max-height: 800px;
+            padding: 1.25rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 1rem;
+            background-color: #f8fafc;
+            outline: none;
+            line-height: 1.6;
+            resize: vertical; /* អនុញ្ញាតឱ្យមេទាញចុះឡើងដោយដៃ */
+            overflow-y: auto;
+            display: block;
+        }
+
+        .dark .text-input-area {
+            background-color: #334155;
+            border-color: #475569;
+            color: #f1f5f9;
+        }
+
+        .text-input-area:focus {
+            ring: 2px;
+            border-color: #6366f1;
+            box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+        }
+
+        ::selection { background: #2563eb; color: #fff; }
+    </style>
+</head>
+<body class="p-4 md:p-8 bg-slate-100 dark:bg-slate-900 transition-colors duration-300">
+
+    <div class="max-w-4xl mx-auto bg-white dark:bg-slate-800 shadow-2xl rounded-3xl overflow-hidden transition-colors duration-300">
+        <header class="bg-indigo-600 dark:bg-indigo-900 p-6 text-white flex justify-between items-center relative">
+            <div class="w-full text-center">
+                <h1 class="text-2xl font-bold italic">SRT Smart Voice Studio</h1>
+                <p class="text-xs opacity-75 mt-1">បិទភ្ជាប់អត្ថបទ SRT ឬអត្ថបទធម្មតា រួចកំណត់សំឡេង AI</p>
+            </div>
+            <!-- Top Right Action Buttons -->
+            <div class="absolute right-6 top-6 flex items-center gap-2">
+                <!-- Clear Cache Button -->
+                <button onclick="clearAppCache()" class="p-2 bg-white/20 hover:bg-red-500/80 rounded-full transition backdrop-blur-sm" title="លុប Cache (Clear Cache)">
+                    <i data-lucide="refresh-cw" class="w-5 h-5 text-white"></i>
+                </button>
+                <!-- Theme Toggle Button -->
+                <button onclick="toggleTheme()" class="p-2 bg-white/20 hover:bg-white/30 rounded-full transition backdrop-blur-sm" title="ដូរ Theme">
+                    <i id="theme-icon" data-lucide="moon" class="w-5 h-5 text-white"></i>
+                </button>
+            </div>
+        </header>
+
+        <div class="p-6 space-y-6">
+            
+            <div class="space-y-6">
+                <!-- ផ្នែក ១: AI Voice Selection -->
+                <div class="space-y-3">
+                    <h2 class="text-lg font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
+                        <i data-lucide="radio" class="w-5 h-5 text-indigo-600 dark:text-indigo-400"></i> 
+                        ជ្រើសរើស AI Voice
+                    </h2>
+                    <p class="text-sm text-slate-500 dark:text-slate-400">ចុចលើកាតដើម្បីជ្រើសរើសសំឡេងគោល ឬប្រើ Tag ក្នុងអត្ថបទ</p>
+                </div>
+
+                <!-- ផ្នែក ២: Piseth + Sreymom -->
+                <div class="grid grid-cols-2 gap-3">
+                    <!-- Piseth Card -->
+                    <div id="card-piseth" class="p-3 bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/30 dark:to-green-800/30 border-2 border-green-300 dark:border-green-700 rounded-lg shadow-md hover:shadow-lg transition transform hover:scale-105 cursor-pointer ring-2 ring-offset-2 ring-green-500" onclick="selectMainVoice('piseth')">
+                        <div class="flex items-start justify-between mb-2">
+                            <div>
+                                <h3 class="text-lg font-bold text-green-700 dark:text-green-400">👦 Piseth</h3>
+                                <p class="text-xs text-green-600 dark:text-green-500 mt-0.5">សំឡេងប្រុស</p>
+                            </div>
+                            <!-- ប៊ូតុងពីរ៖ Tag Settings និង Main Settings -->
+                            <div class="flex gap-1">
+                                <button onclick="event.stopPropagation(); openTagSettings('piseth')" class="p-1 hover:bg-green-200 dark:hover:bg-green-800 rounded transition" title="កំណត់សម្រាប់ Tag">
+                                    <i data-lucide="tag" class="w-4 h-4 text-green-600 dark:text-green-400"></i>
+                                </button>
+                                <button onclick="event.stopPropagation(); openSettings('piseth', 'Piseth')" class="p-1 hover:bg-green-200 dark:hover:bg-green-800 rounded transition" title="កំណត់សំឡេងគោល">
+                                    <i data-lucide="settings" class="w-4 h-4 text-green-600 dark:text-green-400"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2 text-[10px] text-green-700 dark:text-green-300">
+                            <div class="flex items-center gap-1">
+                                <span>⚙️</span>
+                                <span>គោល:</span>
+                                <strong id="piseth-speed" class="text-green-900 dark:text-green-200">1.0x</strong>
+                                <span>/</span>
+                                <strong id="piseth-pitch" class="text-green-900 dark:text-green-200">0</strong>
+                            </div>
+                            <div class="flex items-center gap-1">
+                                <span>🏷️</span>
+                                <span>Tag:</span>
+                                <strong id="piseth-tag-speed" class="text-blue-700 dark:text-blue-300">1.0x</strong>
+                                <span>/</span>
+                                <strong id="piseth-tag-pitch" class="text-blue-700 dark:text-blue-300">0</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Sreymom Card -->
+                    <div id="card-sreymom" class="p-3 bg-gradient-to-br from-pink-50 to-pink-100 dark:from-pink-900/30 dark:to-pink-800/30 border-2 border-transparent dark:border-pink-700 rounded-lg shadow-md hover:shadow-lg transition transform hover:scale-105 cursor-pointer" onclick="selectMainVoice('sreymom')">
+                        <div class="flex items-start justify-between mb-2">
+                            <div>
+                                <h3 class="text-lg font-bold text-pink-700 dark:text-pink-400">👧 Sreymom</h3>
+                                <p class="text-xs text-pink-600 dark:text-pink-500 mt-0.5">សំឡេងស្រី</p>
+                            </div>
+                            <!-- ប៊ូតុងពីរ៖ Tag Settings និង Main Settings -->
+                            <div class="flex gap-1">
+                                <button onclick="event.stopPropagation(); openTagSettings('sreymom')" class="p-1 hover:bg-pink-200 dark:hover:bg-pink-800 rounded transition" title="កំណត់សម្រាប់ Tag">
+                                    <i data-lucide="tag" class="w-4 h-4 text-pink-600 dark:text-pink-400"></i>
+                                </button>
+                                <button onclick="event.stopPropagation(); openSettings('sreymom', 'Sreymom')" class="p-1 hover:bg-pink-200 dark:hover:bg-pink-800 rounded transition" title="កំណត់សំឡេងគោល">
+                                    <i data-lucide="settings" class="w-4 h-4 text-pink-600 dark:text-pink-400"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2 text-[10px] text-pink-700 dark:text-pink-300">
+                            <div class="flex items-center gap-1">
+                                <span>⚙️</span>
+                                <span>គោល:</span>
+                                <strong id="sreymom-speed" class="text-pink-900 dark:text-pink-200">1.0x</strong>
+                                <span>/</span>
+                                <strong id="sreymom-pitch" class="text-pink-900 dark:text-pink-200">0</strong>
+                            </div>
+                            <div class="flex items-center gap-1">
+                                <span>🏷️</span>
+                                <span>Tag:</span>
+                                <strong id="sreymom-tag-speed" class="text-blue-700 dark:text-blue-300">1.0x</strong>
+                                <span>/</span>
+                                <strong id="sreymom-tag-pitch" class="text-blue-700 dark:text-blue-300">0</strong>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="relative group">
+                <textarea id="editor" class="text-input-area" placeholder="បិទភ្ជាប់អត្ថបទ SRT នៅទីនេះ...&#10;ឧទាហរណ៍៖&#10;1&#10;00:00:01,000 --> 00:00:04,000&#10;សួស្តីមិត្តភក្តិទាំងអស់គ្នា"></textarea>
+            </div>
+
+            <div class="flex flex-wrap justify-between items-center gap-3 mt-2">
+                <div class="flex gap-2">
+                    <button onclick="insertTag('piseth')" class="px-3 py-1.5 bg-green-100 text-green-700 rounded-lg text-xs font-bold hover:bg-green-200 transition">
+                        + Tag Piseth
+                    </button>
+                    <button onclick="insertTag('sreymom')" class="px-3 py-1.5 bg-pink-100 text-pink-700 rounded-lg text-xs font-bold hover:bg-pink-200 transition">
+                        + Tag Sreymom
+                    </button>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="clearEditor()" class="flex items-center gap-2 px-4 py-2 bg-slate-200 dark:bg-slate-700 hover:bg-red-50 dark:hover:bg-red-900/30 hover:text-red-600 dark:hover:text-red-400 text-slate-600 dark:text-slate-300 rounded-xl text-sm font-bold transition">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i> 🧹 Clear
+                    </button>
+                    <button id="auto-speed-btn" onclick="toggleAutoSpeed()" class="flex items-center gap-2 px-4 py-2 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300 border border-indigo-100 dark:border-indigo-800 rounded-xl text-sm font-bold transition hover:bg-indigo-100 dark:hover:bg-indigo-900/50">
+                        <i data-lucide="zap" class="w-4 h-4"></i> ⚡ <span id="auto-speed-text">Auto Speed: OFF</span>
+                    </button>
+                </div>
+            </div>
+
+            <button id="convert-btn" onclick="generateAudio()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-4 rounded-2xl font-bold text-xl shadow-lg flex items-center justify-center gap-3 transition active:scale-[0.98] mt-4">
+                <i data-lucide="mic-2"></i> ផលិតសំឡេង (Generate Audio)
+            </button>
+
+            <div id="loader" class="hidden flex flex-col items-center gap-3 py-4">
+                <div class="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                <span class="text-sm text-indigo-600 dark:text-indigo-400 font-bold animate-pulse">កំពុងដំណើរការផលិត... សូមរង់ចាំ</span>
+            </div>
+            
+            <div id="audio-container" class="hidden p-5 bg-indigo-50 dark:bg-indigo-900/20 rounded-2xl border border-indigo-100 dark:border-indigo-800 mt-4 text-center space-y-3 shadow-sm">
+                <audio id="audio-player" controls class="w-full h-10"></audio>
+                <div class="flex justify-center">
+                    <a id="download-link" class="flex items-center gap-2 text-sm text-indigo-700 dark:text-indigo-300 hover:text-indigo-900 dark:hover:text-indigo-100 underline font-bold transition" download="voice_combined.mp3">
+                        <i data-lucide="download" class="w-4 h-4"></i> ទាញយកសំឡេង (MP3)
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="settings-modal" class="fixed inset-0 bg-black/60 hidden flex items-center justify-center z-[100] backdrop-blur-sm">
+        <div class="bg-white dark:bg-slate-800 rounded-[2rem] w-80 p-8 shadow-2xl text-center">
+            <h3 class="font-bold text-lg mb-1 dark:text-white">កំណត់សំឡេង</h3>
+            <p id="modal-title" class="text-indigo-600 dark:text-indigo-400 text-sm font-bold mb-6"></p>
+            <div class="space-y-6 text-left">
+                <input type="hidden" id="target-id">
+                <div>
+                    <div class="flex justify-between text-[11px] font-black text-slate-500 dark:text-slate-400 uppercase mb-2">
+                        <span>ល្បឿន</span> <span id="speed-val" class="text-indigo-600 dark:text-indigo-400">1.0x</span>
+                    </div>
+                    <input type="range" id="input-speed" min="0.5" max="2.0" step="0.1" value="1.0" class="w-full accent-indigo-600" oninput="updateVal('speed-val', this.value + 'x')">
+                </div>
+                <div>
+                    <div class="flex justify-between text-[11px] font-black text-slate-500 dark:text-slate-400 uppercase mb-2">
+                        <span>កម្រិតសំឡេង</span> <span id="pitch-val" class="text-pink-600 dark:text-pink-400">0</span>
+                    </div>
+                    <input type="range" id="input-pitch" min="-10" max="10" step="1" value="0" class="w-full accent-pink-600" oninput="updateVal('pitch-val', this.value)">
+                </div>
+            </div>
+            <button onclick="saveSettings()" class="w-full mt-8 bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold">រក្សាទុក</button>
+            <button onclick="closeSettings()" class="w-full mt-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs py-2">បោះបង់</button>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+    <script>lucide.createIcons();</script>
+</body>
+</html>
