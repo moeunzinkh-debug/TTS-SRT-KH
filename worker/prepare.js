@@ -97,6 +97,10 @@ export function prepareSegments(parts, autoSpeed = false) {
     }
     const speed = asNumber(part.speed, 1, 'Speed');
     const pitch = asNumber(part.pitch, 0, 'Pitch');
+    if (part.autoSpeed !== undefined && typeof part.autoSpeed !== 'boolean') {
+      throw new InputError('Per-part autoSpeed must be true or false.');
+    }
+    const partAutoSpeed = part.autoSpeed ?? autoSpeed;
     if (speed < 0.5 || speed > 2) throw new InputError('Speed must be between 0.5 and 2.0.');
     if (!Number.isInteger(pitch) || pitch < -10 || pitch > 10) {
       throw new InputError('Pitch must be a whole number between -10 and 10.');
@@ -106,7 +110,7 @@ export function prepareSegments(parts, autoSpeed = false) {
       const text = cleanText(dialogue);
       if (!text) continue;
       const length = Array.from(text).length;
-      const finalSpeed = autoSpeed && speed === 1 ? (length > 45 ? 1.4 : length > 30 ? 1.2 : 1) : speed;
+      const finalSpeed = partAutoSpeed && speed === 1 ? (length > 45 ? 1.4 : length > 30 ? 1.2 : 1) : speed;
       const rateValue = Math.round((finalSpeed - 1) * 100);
       const pitchValue = pitch * 20;
       const rate = `${rateValue >= 0 ? '+' : ''}${rateValue}%`;

@@ -120,6 +120,9 @@ def prepare_segments(parts, auto_speed=False):
             raise HTTPException(400, "Unknown voice. Choose Piseth or Sreymom.")
         speed = number(part.get("speed", ...), 1, "Speed")
         pitch = number(part.get("pitch", ...), 0, "Pitch")
+        part_auto_speed = part.get("autoSpeed", auto_speed)
+        if not isinstance(part_auto_speed, bool):
+            raise HTTPException(400, "Per-part autoSpeed must be true or false.")
         if not 0.5 <= speed <= 2:
             raise HTTPException(400, "Speed must be between 0.5 and 2.0.")
         if pitch != int(pitch) or not -10 <= pitch <= 10:
@@ -130,7 +133,7 @@ def prepare_segments(parts, auto_speed=False):
             text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udfff\ufffe\uffff]", " ", text).strip()
             if not text:
                 continue
-            final_speed = (1.4 if len(text) > 45 else 1.2 if len(text) > 30 else 1) if auto_speed and speed == 1 else speed
+            final_speed = (1.4 if len(text) > 45 else 1.2 if len(text) > 30 else 1) if part_auto_speed and speed == 1 else speed
             # Match JavaScript Math.round for custom fractional speed values.
             rate = signed(math.floor((final_speed - 1) * 100 + 0.5), "%")
             pitch_hz = signed(int(pitch) * 20, "Hz")

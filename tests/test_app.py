@@ -149,3 +149,34 @@ def test_static_files_work_from_repository_root():
     assert client.get("/script.js").status_code == 200
     assert client.get("/text.js").status_code == 200
     assert client.get("/app.py").status_code == 404
+
+
+def test_per_part_auto_speed_overrides_global_without_changing_older_requests():
+    long_text = 'ខ' * 46
+    tasks = app.prepare_segments([
+        part(long_text), part(long_text, autoSpeed=False, pitch=2), part(long_text, autoSpeed=True, pitch=-2),
+    ], auto_speed=True)
+    assert [(task['rate'], task['pitch']) for task in tasks] == [
+        ('+40%', '+0Hz'), ('+0%', '+40Hz'), ('+40%', '-40Hz'),
+    ]
+    assert app.prepare_segments([part(long_text, autoSpeed=True)], auto_speed=False)[0]['rate'] == '+40%'
+    assert app.prepare_segments([part(long_text)], auto_speed=False)[0]['rate'] == '+0%'
+    for value in ('false', None, 0, 1):
+        with pytest.raises(HTTPException):
+            app.prepare_segments([part(long_text, autoSpeed=value)])
+
+
+def test_api_passes_per_line_auto_speed_override(monkeypatch):
+    seen = []
+
+    async def fake_synthesize(task):
+        seen.append(task)
+        return b'audio'
+
+    monkeypatch.setattr(app, 'synthesize', fake_synthesize)
+    long_text = 'ខ' * 46
+    response = client.post('/api/process-multi', data=form([
+        part(long_text, autoSpeed=False), part(long_text, pitch=1),
+    ], 'true'))
+    assert response.status_code == 200
+    assert [(item['rate'], item['pitch']) for item in seen] == [('+0%', '+0Hz'), ('+40%', '+20Hz')]

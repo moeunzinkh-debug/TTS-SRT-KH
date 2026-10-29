@@ -66,3 +66,14 @@ test('returns a timeout and handles methods and static assets', async () => {
   const staticResponse = await handleRequest(new Request('https://studio.example/'), env);
   assert.equal(await staticResponse.text(), 'static asset');
 });
+
+test('API passes per-line Auto Speed overrides through to synthesis', async () => {
+  const long = 'ខ'.repeat(46);
+  const seen = [];
+  const response = await handleRequest(request([
+    { ...one, text: long, autoSpeed: false },
+    { ...one, text: long, pitch: 1 },
+  ], 'true'), env, { synthesize: async task => { seen.push(task); return Uint8Array.of(1); } });
+  assert.equal(response.status, 200);
+  assert.deepEqual(seen.map(({ rate, pitch }) => [rate, pitch]), [['+0%', '+0Hz'], ['+40%', '+20Hz']]);
+});
