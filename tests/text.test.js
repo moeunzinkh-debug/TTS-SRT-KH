@@ -28,6 +28,31 @@ test('speaker tags keep their voice, attribute order and surrounding SRT dialogu
   ]);
 });
 
+test('SRT metadata wrapped in voice tags is still stripped and never spoken', () => {
+  // Regression: a timing line inside <piseth>...</piseth> used to hide the
+  // cue number from the metadata detector, so "1" was read aloud.
+  const srt = '1\n<piseth>00:00:01,000 --> 00:00:02,000</piseth>\nសួស្តី\n\n';
+  assert.deepEqual(splitDialogue(srt), ['សួស្តី']);
+  const parts = buildVoiceParts(srt, 'piseth', voices, tags);
+  assert.deepEqual(parts.map(part => part.text), ['សួស្តី']);
+  assert.deepEqual(prepareSegments(parts).map(task => task.text), ['សួស្តី']);
+});
+
+test('alternating male/female tags on every cue produce one ordered task per cue', () => {
+  let srt = '';
+  for (let index = 1; index <= 124; index++) {
+    const name = index % 2 ? 'sreymom' : 'piseth';
+    srt += `${index}\n00:00:01,000 --> 00:00:02,000\n<${name} speed="1.0" pitch="0">${'ខ'.repeat(20)}</${name}>\n\n`;
+  }
+  const parts = buildVoiceParts(srt, 'piseth', voices, tags);
+  assert.equal(parts.length, 124);
+  const tasks = prepareSegments(parts, true);
+  assert.equal(tasks.length, 124);
+  assert.deepEqual(tasks.slice(0, 4).map(task => task.voice), [
+    'km-KH-SreymomNeural', 'km-KH-PisethNeural', 'km-KH-SreymomNeural', 'km-KH-PisethNeural',
+  ]);
+});
+
 test('only known voice tags are interpreted, defaults and single quotes work', () => {
   const parts = buildVoiceParts('<i>hello</i> <SREYMOM>world</SREYMOM> <piseth pitch=\'2\'>friend</piseth>', 'piseth', voices, tags);
   assert.deepEqual(parts.map(part => [part.text, part.voiceName, part.speed, part.pitch]), [

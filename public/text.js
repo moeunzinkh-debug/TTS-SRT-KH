@@ -4,10 +4,17 @@
 const TIMING_LINE = /^\s*(?:\d{1,2}:)?\d{2}:\d{2}[,.]\d{1,3}\s*-->\s*(?:\d{1,2}:)?\d{2}:\d{2}[,.]\d{1,3}(?:\s+.*)?\s*$/;
 
 // The same rules are used by the editor's per-line controls and synthesis.
+// Voice tags (<piseth>, <sreymom>, ...) are ignored when detecting metadata,
+// so a cue number or timing line wrapped in a tag is still treated as SRT
+// metadata and never spoken aloud.
+const TAG_MARKUP = /<\/?[A-Za-z][^>]*>/g;
+function plainLine(line) {
+    return (line || '').replace(TAG_MARKUP, '');
+}
 export function isSrtMetadata(lines, index) {
     const line = index === 0 ? (lines[index] || '').replace(/^\uFEFF/, '') : (lines[index] || '');
-    return TIMING_LINE.test(line) ||
-        (/^\s*\d+\s*$/.test(line) && TIMING_LINE.test(lines[index + 1] || ''));
+    return TIMING_LINE.test(plainLine(line)) ||
+        (/^\s*\d+\s*$/.test(plainLine(line)) && TIMING_LINE.test(plainLine(lines[index + 1])));
 }
 
 export function hasSpokenText(line) {

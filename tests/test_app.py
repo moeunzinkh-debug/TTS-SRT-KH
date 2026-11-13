@@ -80,6 +80,22 @@ def test_supports_the_full_1000000_character_maximum():
     assert len(khmer_tasks) <= 6000
 
 
+def test_srt_metadata_wrapped_in_voice_tags_is_never_spoken():
+    # Regression: a timing line inside a tag used to hide the cue number
+    # from the metadata detector, so "1" was read aloud.
+    srt = "1\n<piseth>00:00:01,000 --> 00:00:02,000</piseth>\nសួស្តី\n\n"
+    tasks = app.prepare_segments([part(srt)])
+    assert [task["text"] for task in tasks] == ["សួស្តី"]
+
+
+def test_voice_tags_inside_a_single_part_are_stripped_not_spoken():
+    # The frontend splits tags into separate parts; if a raw tagged string
+    # reaches the API directly, the markup must be stripped, not spoken.
+    tasks = app.prepare_segments([part("<sreymom speed=\"1.0\">សួស្តី</sreymom> <piseth>លា</piseth>")])
+    assert [task["text"] for task in tasks] == ["សួស្តី លា"]
+    assert tasks[0]["voice"] == "km-KH-PisethNeural"
+
+
 def test_124_cue_srt_with_auto_speed_and_alternating_voices_fit():
     # Regression: per-cue Auto Speed used to fragment a 124-cue SRT into
     # more than the old 40-task cap and fail with 413.

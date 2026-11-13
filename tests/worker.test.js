@@ -104,6 +104,28 @@ test('a 5,000-cue SRT with per-cue alternating voices completes in one request',
   assert.equal(calls, 5000);
 });
 
+test('a 124-cue SRT with alternating male/female tags synthesizes in order', async () => {
+  const { buildVoiceParts } = await import('../public/text.js');
+  const voices = { piseth: { speed: 1, pitch: 0 }, sreymom: { speed: 1, pitch: 0 } };
+  const tags = { piseth: { speed: 1, pitch: 0 }, sreymom: { speed: 1, pitch: 0 } };
+  let srt = '';
+  for (let index = 1; index <= 124; index++) {
+    const name = index % 2 ? 'sreymom' : 'piseth';
+    srt += `${index}\n00:00:01,000 --> 00:00:02,000\n<${name} speed="1.0" pitch="0">${'ខ'.repeat(20)}</${name}>\n\n`;
+  }
+  const parts = buildVoiceParts(srt, 'piseth', voices, tags, undefined, undefined, true);
+  const seen = [];
+  const response = await handleRequest(request(parts, 'true'), env, {
+    synthesize: async task => { seen.push(task.voice); return Uint8Array.of(1); },
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.arrayBuffer()).byteLength, 124);
+  assert.equal(seen.length, 124);
+  assert.deepEqual(seen.slice(0, 4), [
+    'km-KH-SreymomNeural', 'km-KH-PisethNeural', 'km-KH-SreymomNeural', 'km-KH-PisethNeural',
+  ]);
+});
+
 test('many segments synthesize in parallel but keep dialogue order', async () => {
   const parts = Array.from({ length: 50 }, (_, index) => ({ ...one, text: `line ${index}`, voiceName: index % 2 ? 'sreymom' : 'piseth' }));
   let active = 0;

@@ -48,11 +48,15 @@ TIMING_LINE = re.compile(
 def parse_srt(value):
     """Extract dialogue from SRT or plain text without speaking cue metadata."""
     lines = value.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    # Ignore tag markup when detecting metadata so a cue number or timing
+    # line wrapped in a voice tag (<piseth>00:00:...</piseth>) is still
+    # treated as SRT metadata and never spoken aloud.
+    plain = [re.sub(r"</?[A-Za-z][^>]*>", "", line) for line in lines]
     retained = []
     for index, line in enumerate(lines):
-        if TIMING_LINE.match(line):
+        if TIMING_LINE.match(plain[index]):
             continue
-        if re.fullmatch(r"\s*\d+\s*", line) and index + 1 < len(lines) and TIMING_LINE.match(lines[index + 1]):
+        if re.fullmatch(r"\s*\d+\s*", plain[index]) and index + 1 < len(lines) and TIMING_LINE.match(plain[index + 1]):
             continue
         retained.append(line)
     return [
