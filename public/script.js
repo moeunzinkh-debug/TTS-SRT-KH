@@ -433,8 +433,12 @@ window.generateAudio = async () => {
 
         if (!response.ok) {
             const body = await response.json().catch(() => ({}));
-            throw new Error(typeof body.detail === 'string'
-                ? body.detail : 'មានបញ្ហាក្នុងការផលិតសំឡេង');
+            const detail = typeof body.detail === 'string' ? body.detail : 'មានបញ្ហាក្នុងការផលិតសំឡេង';
+            // 413 = file too long / too many voice changes. Guide the user in
+            // Khmer instead of only showing the English server message.
+            throw new Error(response.status === 413
+                ? 'ឯកសារវែងពេក ឬផ្លាស់ប្តូរសំឡេងច្រើនពេក (អត្ថបទអតិបរមា 500,000 តួអក្សរ / ផ្នែកសំឡេងអតិបរមា 1,000 — គាំទ្រា SRT រហូតដល់ 300 ជួរ)។ បើលើសដែន សូមបែងចែក SRT ជាផ្នែកតូចៗ (ណែនាំ ~20,000–50,000 តួអក្សរក្នុងមួយដង) ហើយផលិតម្ដងមួយៗ។\n' + detail
+                : detail);
         }
 
         const blob = await response.blob();

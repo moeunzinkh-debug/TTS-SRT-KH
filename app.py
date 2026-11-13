@@ -20,10 +20,18 @@ VOICE_MAP = {
     "visal": "km-KH-PisethNeural",
     "mina": "km-KH-SreymomNeural",
 }
-MAX_FORM_BYTES = 256 * 1024
-MAX_TEXT_CHARACTERS = 20000
-MAX_PARTS = 200
-MAX_SYNTHESIS_REQUESTS = 40
+# 500,000 Khmer characters are ~1.5 MB in UTF-8 (plus JSON/multipart
+# overhead), so the form limit must comfortably exceed that and the 5 MB
+# browser upload limit.
+MAX_FORM_BYTES = 8 * 1024 * 1024
+MAX_TEXT_CHARACTERS = 500000
+MAX_PARTS = 1000
+# Synthesis runs with limited parallelism (see process_multi), so a full
+# SRT episode fits under this cap. 500,000 characters of one voice need
+# roughly 430 tasks, so the cap is 1,000. Splitting very long files into
+# ~20k-50k character chunks per Generate is faster and more reliable.
+MAX_SYNTHESIS_REQUESTS = 1000
+SYNTHESIS_CONCURRENCY = 6
 MAX_ESCAPED_BYTES = 3500
 MAX_TOTAL_AUDIO_BYTES = 32 * 1024 * 1024
 TIMING_LINE = re.compile(
@@ -128,15 +136,22 @@ def prepare_segments(parts, auto_speed=False):
         if pitch != int(pitch) or not -10 <= pitch <= 10:
             raise HTTPException(400, "Pitch must be a whole number between -10 and 10.")
 
+        # Decide Auto Speed once per part, not once per SRT cue, so one long
+        # part does not fragment into dozens of synthesis requests.
+        dialogues = []
         for dialogue in parse_srt(raw_text):
             text = re.sub(r"</?[A-Za-z][^>]*>", "", dialogue)
             text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udfff\ufffe\uffff]", " ", text).strip()
-            if not text:
-                continue
-            final_speed = (1.4 if len(text) > 45 else 1.2 if len(text) > 30 else 1) if part_auto_speed and speed == 1 else speed
-            # Match JavaScript Math.round for custom fractional speed values.
-            rate = signed(math.floor((final_speed - 1) * 100 + 0.5), "%")
-            pitch_hz = signed(int(pitch) * 20, "Hz")
+            if text:
+                dialogues.append(text)
+        if not dialogues:
+            continue
+        spoken_length = sum(len(text) for text in dialogues)
+        final_speed = (1.4 if spoken_length > 45 else 1.2 if spoken_length > 30 else 1) if part_auto_speed and speed == 1 else speed
+        # Match JavaScript Math.round for custom fractional speed values.
+        rate = signed(math.floor((final_speed - 1) * 100 + 0.5), "%")
+        pitch_hz = signed(int(pitch) * 20, "Hz")
+        for text in dialogues:
             for piece in split_text(text):
                 byte_count = sum(escaped_bytes(char) for char in piece)
                 previous = tasks[-1] if tasks else None
@@ -146,7 +161,7 @@ def prepare_segments(parts, auto_speed=False):
                 else:
                     tasks.append({"text": piece, "voice": VOICE_MAP[voice_name], "rate": rate, "pitch": pitch_hz, "bytes": byte_count})
                     if len(tasks) > MAX_SYNTHESIS_REQUESTS:
-                        raise HTTPException(413, f"Too many voice changes or text segments (maximum {MAX_SYNTHESIS_REQUESTS}).")
+                        raise HTTPException(413, f"Too many voice changes or text segments (maximum {MAX_SYNTHESIS_REQUESTS}). Please split the SRT into smaller files and generate each part separately.")
     if not tasks:
         raise HTTPException(400, "No text to synthesize.")
     return tasks
@@ -205,15 +220,24 @@ async def process_multi(request: Request):
     if auto_speed not in ("true", "false"):
         raise HTTPException(400, "autoSpeed must be true or false.")
     segments = prepare_segments(parts, auto_speed == "true")
+    semaphore = asyncio.Semaphore(SYNTHESIS_CONCURRENCY)
+
+    async def synthesize_limited(segment):
+        async with semaphore:
+            try:
+                return await asyncio.wait_for(synthesize(segment), timeout=60)
+            except asyncio.TimeoutError:
+                raise HTTPException(504, "Edge TTS timed out. Please try again.") from None
+            except HTTPException:
+                raise
+            except Exception as error:
+                logger.warning("Edge TTS synthesis failed: %s", type(error).__name__)
+                raise HTTPException(502, "Could not generate Edge TTS audio. Check the network and try again.") from None
+
+    # gather preserves task order, so the concatenated MP3 keeps dialogue order.
+    chunks = await asyncio.gather(*(synthesize_limited(segment) for segment in segments))
     audio = bytearray()
-    for segment in segments:
-        try:
-            chunk = await asyncio.wait_for(synthesize(segment), timeout=60)
-        except asyncio.TimeoutError:
-            raise HTTPException(504, "Edge TTS timed out. Please try again.") from None
-        except Exception as error:
-            logger.warning("Edge TTS synthesis failed: %s", type(error).__name__)
-            raise HTTPException(502, "Could not generate Edge TTS audio. Check the network and try again.") from None
+    for chunk in chunks:
         if not chunk:
             raise HTTPException(502, "Edge TTS returned no audio.")
         audio.extend(chunk)

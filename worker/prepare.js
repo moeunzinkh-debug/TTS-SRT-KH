@@ -6,10 +6,16 @@ export const VOICES = Object.freeze({
   visal: 'km-KH-PisethNeural',
   mina: 'km-KH-SreymomNeural',
 });
-export const MAX_TEXT_CHARACTERS = 20000;
-export const MAX_PARTS = 200;
-// Leave room for retries/platform overhead under the Workers free-plan limit.
-export const MAX_SYNTHESIS_REQUESTS = 40;
+export const MAX_TEXT_CHARACTERS = 500000;
+export const MAX_PARTS = 1000;
+// Synthesis runs with limited parallelism (see worker/index.js), so a full
+// SRT episode fits: 124 cues of one voice collapse to a handful of tasks,
+// and even a dialogue alternating Piseth/Sreymom on every cue stays under
+// this cap. 500,000 characters of one voice need roughly 430 tasks
+// (3,500 escaped bytes each), so the cap is 1,000. Very long files still
+// take a while and produce a large MP3 — splitting into ~20k–50k character
+// chunks per Generate is faster and more reliable.
+export const MAX_SYNTHESIS_REQUESTS = 1000;
 export const MAX_ESCAPED_BYTES = 3500;
 
 export class InputError extends Error {
@@ -106,16 +112,21 @@ export function prepareSegments(parts, autoSpeed = false) {
       throw new InputError('Pitch must be a whole number between -10 and 10.');
     }
 
-    for (const dialogue of splitDialogue(part.text)) {
-      const text = cleanText(dialogue);
-      if (!text) continue;
-      const length = Array.from(text).length;
-      const finalSpeed = partAutoSpeed && speed === 1 ? (length > 45 ? 1.4 : length > 30 ? 1.2 : 1) : speed;
-      const rateValue = Math.round((finalSpeed - 1) * 100);
-      const pitchValue = pitch * 20;
-      const rate = `${rateValue >= 0 ? '+' : ''}${rateValue}%`;
-      const pitchHz = `${pitchValue >= 0 ? '+' : ''}${pitchValue}Hz`;
+    // Decide Auto Speed once per part, not once per SRT cue. The browser
+    // already merges adjacent cues with the same voice/settings into one
+    // part; recomputing the speed for every cue inside it (1.0/1.2/1.4 by
+    // cue length) fragmented one long part into dozens of synthesis
+    // requests and made full SRT files fail with "Too many voice changes".
+    const dialogues = splitDialogue(part.text).map(cleanText).filter(Boolean);
+    if (!dialogues.length) continue;
+    const spokenLength = dialogues.reduce((sum, text) => sum + Array.from(text).length, 0);
+    const finalSpeed = partAutoSpeed && speed === 1 ? (spokenLength > 45 ? 1.4 : spokenLength > 30 ? 1.2 : 1) : speed;
+    const rateValue = Math.round((finalSpeed - 1) * 100);
+    const pitchValue = pitch * 20;
+    const rate = `${rateValue >= 0 ? '+' : ''}${rateValue}%`;
+    const pitchHz = `${pitchValue >= 0 ? '+' : ''}${pitchValue}Hz`;
 
+    for (const text of dialogues) {
       for (const piece of splitText(text)) {
         const bytes = Array.from(piece).reduce((sum, char) => sum + escapedBytes(char), 0);
         const previous = tasks[tasks.length - 1];
@@ -126,7 +137,7 @@ export function prepareSegments(parts, autoSpeed = false) {
         } else {
           tasks.push({ text: piece, voice: VOICES[voiceName], rate, pitch: pitchHz, bytes });
           if (tasks.length > MAX_SYNTHESIS_REQUESTS) {
-            throw new InputError(`Too many voice changes or text segments (maximum ${MAX_SYNTHESIS_REQUESTS}).`, 413);
+            throw new InputError(`Too many voice changes or text segments (maximum ${MAX_SYNTHESIS_REQUESTS}). Please split the SRT into smaller files and generate each part separately.`, 413);
           }
         }
       }
