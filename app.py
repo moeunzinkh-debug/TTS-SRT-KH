@@ -34,6 +34,10 @@ MAX_PARTS = 6000
 # Split very long files into smaller chunks per Generate beyond that.
 MAX_SYNTHESIS_REQUESTS = 6000
 SYNTHESIS_CONCURRENCY = 6
+# Edge TTS occasionally drops the websocket mid-stream ("closed before audio
+# was complete"), especially when many tagged segments open several
+# connections at once. Retry each segment a few times with a short backoff.
+SYNTHESIS_ATTEMPTS = 3
 # A 5,000-cue SRT produces tens of MB of MP3 (48 kbps), so the response is
 # streamed in ordered waves instead of buffered in memory.
 EMIT_WAVE = 24
@@ -243,16 +247,21 @@ async def process_multi(request: Request):
     semaphore = asyncio.Semaphore(SYNTHESIS_CONCURRENCY)
 
     async def synthesize_limited(segment):
-        async with semaphore:
+        last_error = None
+        for attempt in range(1, SYNTHESIS_ATTEMPTS + 1):
             try:
-                return await asyncio.wait_for(synthesize(segment), timeout=60)
+                async with semaphore:
+                    return await asyncio.wait_for(synthesize(segment), timeout=60)
             except asyncio.TimeoutError:
-                raise HTTPException(504, "Edge TTS timed out. Please try again.") from None
+                last_error = HTTPException(504, "Edge TTS timed out. Please try again.")
             except HTTPException:
                 raise
             except Exception as error:
-                logger.warning("Edge TTS synthesis failed: %s", type(error).__name__)
-                raise HTTPException(502, "Could not generate Edge TTS audio. Check the network and try again.") from None
+                logger.warning("Edge TTS synthesis failed (attempt %s): %s", attempt, type(error).__name__)
+                last_error = HTTPException(502, "Could not generate Edge TTS audio. Check the network and try again.")
+            if attempt < SYNTHESIS_ATTEMPTS:
+                await asyncio.sleep(0.4 * attempt)
+        raise last_error
 
     # Synthesize the first wave eagerly so an upstream failure still returns
     # a proper error status before any audio bytes are sent. Later waves are
