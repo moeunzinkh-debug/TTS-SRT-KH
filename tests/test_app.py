@@ -187,6 +187,34 @@ def test_api_returns_ordered_audio_without_files(monkeypatch):
     ]
 
 
+def test_transient_edge_tts_failures_are_retried(monkeypatch):
+    calls = 0
+
+    async def flaky(_task):
+        nonlocal calls
+        calls += 1
+        if calls <= 2:
+            raise RuntimeError("Edge TTS closed before audio was complete.")
+        return b"audio"
+
+    monkeypatch.setattr(app, "synthesize", flaky)
+    response = client.post("/api/process-multi", data=form([part("សួស្តី")]))
+    assert response.status_code == 200
+    assert response.content == b"audio"
+    assert calls == 3
+
+    async def always_fails(_task):
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("Edge TTS closed before audio was complete.")
+
+    calls = 0
+    monkeypatch.setattr(app, "synthesize", always_fails)
+    response = client.post("/api/process-multi", data=form([part("សួស្តី")]))
+    assert response.status_code == 502
+    assert calls == app.SYNTHESIS_ATTEMPTS
+
+
 def test_api_validation_failure_and_no_partial_audio(monkeypatch):
     assert client.post("/api/process-multi", data={}).status_code == 400
     assert client.post("/api/process-multi", data={"data": "{broken"}).status_code == 400
@@ -204,9 +232,7 @@ def test_api_validation_failure_and_no_partial_audio(monkeypatch):
     async def failing_synthesize(_task):
         nonlocal calls
         calls += 1
-        if calls == 2:
-            raise RuntimeError("upstream failed")
-        return b"audio"
+        raise RuntimeError("upstream failed")
 
     monkeypatch.setattr(app, "synthesize", failing_synthesize)
     response = client.post("/api/process-multi", data=form([part("first"), part("second", voiceName="sreymom")]))

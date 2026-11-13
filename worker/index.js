@@ -15,6 +15,23 @@ const MAX_TOTAL_AUDIO_BYTES = 128 * 1024 * 1024;
 // dialogue order never changes.
 const SYNTHESIS_CONCURRENCY = 6;
 const EMIT_WAVE = 24;
+// Edge TTS occasionally drops the websocket mid-stream ("closed before audio
+// was complete"), especially when many tagged segments open several
+// connections at once. That failure is transient, so retry each segment a
+// few times with a short backoff before giving up.
+const SYNTHESIS_ATTEMPTS = 3;
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function synthesizeWithRetry(task, synthesize) {
+  for (let attempt = 1; attempt <= SYNTHESIS_ATTEMPTS; attempt++) {
+    try {
+      return await synthesize(task);
+    } catch (error) {
+      if (!(error instanceof UpstreamError) || attempt === SYNTHESIS_ATTEMPTS) throw error;
+      await sleep(400 * attempt);
+    }
+  }
+  throw new UpstreamError('Edge TTS is unavailable.');
+}
 
 function errorResponse(detail, status, extraHeaders = {}) {
   return Response.json({ detail }, {
@@ -89,7 +106,7 @@ async function processMulti(request, synthesize) {
     const workers = Array.from({ length: Math.min(SYNTHESIS_CONCURRENCY, end - start) }, async () => {
       while (next < end) {
         const index = next++;
-        const chunk = await synthesize(tasks[index]);
+        const chunk = await synthesizeWithRetry(tasks[index], synthesize);
         if (!(chunk instanceof Uint8Array) || !chunk.length) throw new UpstreamError('Edge TTS returned no audio.');
         wave[index - start] = chunk;
       }

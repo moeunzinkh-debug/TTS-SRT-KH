@@ -1,4 +1,4 @@
-const CACHE_NAME = 'voice-studio-v11';
+const CACHE_NAME = 'voice-studio-v12';
 const APP_SHELL = ['/', '/script.js', '/text.js', '/line-voices.js', '/style.css', '/manifest.json'];
 
 self.addEventListener('install', (event) => {

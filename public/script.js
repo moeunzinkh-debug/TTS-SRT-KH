@@ -403,6 +403,18 @@ window.clearEditor = () => {
     }
 };
 
+// Translate common English Edge TTS failures into Khmer so mobile users
+// understand transient errors (the server retries each segment 3 times).
+function khmerUpstreamError(detail) {
+    if (/timed out/i.test(detail)) return 'Edge TTS ឆ្លើយយឺតពេក (អស់ពេល 60 វិនាទី)។ សូមព្យាយាមម្ដងទៀត។';
+    if (/closed before audio was complete|connection failed|could not connect|no audio|invalid audio/i.test(detail)) {
+        return 'ការភ្ជាប់ទៅ Edge TTS បានដាច់។ សូមព្យាយាមម្ដងទៀត (ប្រព័ន្ធព្យាយាម 3 ដងដោយស្វ័យប្រវត្តិ)។';
+    }
+    if (/rejected/i.test(detail)) return 'Edge TTS បដិសេធការតភ្ជាប់។ សូមព្យាយាមម្ដងទៀត។';
+    if (/too large/i.test(detail)) return 'សំឡេងធំពេក — សូមបែងចែកឯកសារជាផ្នែកតូចៗ។';
+    return detail;
+}
+
 // --- ផលិតសំឡេង (Main Function) ---
 window.generateAudio = async () => {
     // Keep original line numbers (including leading blank lines) for voice choices.
@@ -438,7 +450,7 @@ window.generateAudio = async () => {
             // Khmer instead of only showing the English server message.
             throw new Error(response.status === 413
                 ? 'ឯកសារវែងពេក ឬផ្លាស់ប្តូរសំឡេងច្រើនពេក (អត្ថបទអតិបរមា 1,000,000 តួអក្សរ / ផ្នែកសំឡេងអតិបរមា 6,000 — គាំទ្រា SRT រហូតដល់ 5,000 ជួរ)។ បើលើសដែន សូមបែងចែក SRT ជាផ្នែកតូចៗ (ណែនាំ ~20,000–50,000 តួអក្សរក្នុងមួយដង) ហើយផលិតម្ដងមួយៗ។\n' + detail
-                : detail);
+                : khmerUpstreamError(detail));
         }
 
         const blob = await response.blob();

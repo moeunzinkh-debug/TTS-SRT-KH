@@ -44,15 +44,40 @@ test('rejects malformed forms, JSON, values, large bodies and cross-origin posts
   assert.equal((await handleRequest(noLength, env)).status, 413);
 });
 
+test('transient Edge TTS failures are retried and then succeed', async () => {
+  let calls = 0;
+  const response = await handleRequest(request([one]), env, {
+    synthesize: async () => {
+      calls++;
+      if (calls <= 2) throw new UpstreamError('Edge TTS closed before audio was complete.');
+      return Uint8Array.of(7);
+    },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(calls, 3); // 2 failures + 1 success
+  assert.equal((await response.arrayBuffer()).byteLength, 1);
+});
+
+test('a segment that keeps failing surfaces 502 after all attempts', async () => {
+  let calls = 0;
+  const response = await handleRequest(request([one]), env, {
+    synthesize: async () => { calls++; throw new UpstreamError('Edge TTS closed before audio was complete.'); },
+  });
+  assert.equal(response.status, 502);
+  assert.equal(calls, 3);
+  assert.deepEqual(await response.json(), { detail: 'Edge TTS closed before audio was complete.' });
+});
+
 test('reports upstream failure instead of returning partial audio', async () => {
   let calls = 0;
   const response = await handleRequest(request([one, { ...one, voiceName: 'sreymom' }]), env, {
     synthesize: async () => {
-      if (++calls === 2) throw new UpstreamError('Edge TTS is unavailable.');
-      return Uint8Array.of(1, 2);
+      calls++;
+      throw new UpstreamError('Edge TTS is unavailable.');
     },
   });
   assert.equal(response.status, 502);
+  assert.ok(calls >= 3); // every attempt fails, no partial audio is returned
   assert.deepEqual(await response.json(), { detail: 'Edge TTS is unavailable.' });
 });
 
