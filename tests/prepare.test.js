@@ -46,9 +46,69 @@ test('rejects invalid parts, settings, excess text and too many voice changes', 
     [part(' ')],
   ];
   for (const input of bad) assert.throws(() => prepareSegments(input), InputError);
-  assert.throws(() => prepareSegments([part('x'.repeat(20001))]), error => error.status === 413);
-  const manyVoices = Array.from({ length: 41 }, (_, index) => part('hello', { voiceName: index % 2 ? 'sreymom' : 'piseth' }));
+  assert.throws(() => prepareSegments([part('x'.repeat(500001))]), error => error.status === 413);
+  const manyVoices = Array.from({ length: 1001 }, (_, index) => part('hello', { voiceName: index % 2 ? 'sreymom' : 'piseth' }));
   assert.throws(() => prepareSegments(manyVoices), error => error.status === 413);
+});
+
+test('supports the full 500,000-character maximum', () => {
+  const tasks = prepareSegments([part('x'.repeat(500000))]);
+  assert.ok(tasks.length > 1);
+  assert.ok(tasks.length <= 1000);
+  // Khmer text (3 UTF-8 bytes per character) also fits under the task cap.
+  const khmerTasks = prepareSegments([part('ខ'.repeat(500000))]);
+  assert.ok(khmerTasks.length <= 1000, `expected <=1000 tasks, got ${khmerTasks.length}`);
+});
+
+test('regression: a 124-cue SRT with Auto Speed ON no longer exceeds the segment cap', async () => {
+  const { buildVoiceParts } = await import('../public/text.js');
+  // Natural SRT cue lengths vary, so per-cue Auto Speed used to fragment
+  // this into >40 tasks. Per-part Auto Speed must collapse it instead.
+  let seed = 42;
+  const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  let srt = '';
+  for (let index = 1; index <= 124; index++) {
+    srt += `${index}\n00:00:01,000 --> 00:00:02,000\n${'ខ'.repeat(10 + Math.floor(random() * 50))}\n\n`;
+  }
+  const voices = { piseth: { speed: 1, pitch: 0 }, sreymom: { speed: 1, pitch: 0 } };
+  const tags = { piseth: { speed: 1, pitch: 0 }, sreymom: { speed: 1, pitch: 0 } };
+  const parts = buildVoiceParts(srt, 'piseth', voices, tags, undefined, undefined, true);
+  assert.equal(parts.length, 1);
+  const tasks = prepareSegments(parts, true);
+  assert.ok(tasks.length <= 10, `expected a handful of tasks, got ${tasks.length}`);
+  assert.equal(tasks[0].rate, '+40%'); // Whole long part speeds up as one run.
+});
+
+test('regression: dialogue alternating voices on every cue fits under the raised cap', () => {
+  const alternating = Array.from({ length: 124 }, (_, index) => part('ខ'.repeat(20), { voiceName: index % 2 ? 'sreymom' : 'piseth' }));
+  const tasks = prepareSegments(alternating);
+  assert.equal(tasks.length, 124);
+});
+
+test('regression: a 300-cue SRT fits in one run in every common configuration', async () => {
+  const { buildVoiceParts } = await import('../public/text.js');
+  const voices = { piseth: { speed: 1, pitch: 0 }, sreymom: { speed: 1, pitch: 0 } };
+  const tags = { piseth: { speed: 1, pitch: 0 }, sreymom: { speed: 1, pitch: 0 } };
+  let srt = '';
+  for (let index = 1; index <= 300; index++) {
+    srt += `${index}\n00:00:01,000 --> 00:00:02,000\n${'ខ'.repeat(20)}\n\n`;
+  }
+  // Single voice, Auto Speed ON.
+  const single = buildVoiceParts(srt, 'piseth', voices, tags, undefined, undefined, true);
+  assert.ok(prepareSegments(single, true).length <= 1000);
+  // Alternating Piseth/Sreymom per cue: worst case, one task per cue.
+  const overrides = new Map();
+  for (let index = 0; index < 300; index++) overrides.set(index * 4 + 2, index % 2 ? 'sreymom' : 'piseth');
+  const alternating = buildVoiceParts(srt, 'piseth', voices, tags, overrides, undefined, false);
+  assert.equal(alternating.length, 300);
+  assert.equal(prepareSegments(alternating).length, 300);
+  // Every cue with a unique manual speed/pitch.
+  const settings = new Map();
+  for (let index = 0; index < 300; index++) settings.set(index * 4 + 2, { speed: 0.5 + (index % 16) * 0.1, pitch: (index % 21) - 10 });
+  const customized = buildVoiceParts(srt, 'piseth', voices, tags, undefined, settings, false);
+  assert.equal(prepareSegments(customized).length, 300);
+  // 301 cues of alternating voices still exceed nothing: 301 < 1000 too,
+  // but 300 is the documented supported episode length.
 });
 
 test('per-part Auto Speed overrides the global flag without changing older requests', () => {

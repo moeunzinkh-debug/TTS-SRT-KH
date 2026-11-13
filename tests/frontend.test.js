@@ -70,6 +70,20 @@ test('API errors are displayed, and a later success revokes the previous URL', a
   assert.equal(element('audio-player').src, 'blob:test-2');
 });
 
+test('a 413 too-many-segments error explains the fix in Khmer', async () => {
+  element('editor').value = 'សួស្តី';
+  globalThis.fetch = async () => Response.json({ detail: 'Too many voice changes or text segments (maximum 1000).' }, { status: 413 });
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    await window.generateAudio();
+  } finally {
+    console.error = originalError;
+  }
+  assert.match(alerts.pop(), /បែងចែក SRT ជាផ្នែកតូចៗ/);
+  assert.equal(element('convert-btn').disabled, false);
+});
+
 test('duplicate clicks do not send concurrent requests', async () => {
   let count = 0;
   let finish;

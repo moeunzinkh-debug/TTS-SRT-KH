@@ -32,13 +32,13 @@ test('rejects malformed forms, JSON, values, large bodies and cross-origin posts
     assert.equal(response.status, 400);
     assert.equal(typeof (await response.json()).detail, 'string');
   }
-  const large = await handleRequest(request([one], 'false', { 'content-length': '300000' }), env);
+  const large = await handleRequest(request([one], 'false', { 'content-length': '9000000' }), env);
   assert.equal(large.status, 413);
   const crossOrigin = await handleRequest(request([one], 'false', { origin: 'https://elsewhere.example' }), env);
   assert.equal(crossOrigin.status, 403);
   const oversizedForm = new FormData();
   oversizedForm.set('data', JSON.stringify([one]));
-  oversizedForm.set('unused', 'x'.repeat(270000));
+  oversizedForm.set('unused', 'x'.repeat(9 * 1024 * 1024));
   const noLength = new Request('https://studio.example/api/process-multi', { method: 'POST', body: oversizedForm });
   assert.equal(noLength.headers.has('content-length'), false);
   assert.equal((await handleRequest(noLength, env)).status, 413);
@@ -65,6 +65,47 @@ test('returns a timeout and handles methods and static assets', async () => {
   assert.equal((await handleRequest(new Request('https://studio.example/api/missing'), env)).status, 404);
   const staticResponse = await handleRequest(new Request('https://studio.example/'), env);
   assert.equal(await staticResponse.text(), 'static asset');
+});
+
+test('accepts the full 500,000-character maximum through the API', async () => {
+  let calls = 0;
+  const response = await handleRequest(request([{ ...one, text: 'x'.repeat(500000) }]), env, {
+    synthesize: async () => { calls++; return Uint8Array.of(1); },
+  });
+  assert.equal(response.status, 200);
+  assert.ok(calls > 1 && calls <= 1000, `expected 2..1000 synthesis calls, got ${calls}`);
+  assert.equal((await response.arrayBuffer()).byteLength, calls);
+});
+
+test('a 300-cue SRT with per-cue alternating voices completes in one request', async () => {
+  const parts = Array.from({ length: 300 }, (_, index) => ({
+    text: 'ខ'.repeat(20), voiceName: index % 2 ? 'sreymom' : 'piseth', speed: 1, pitch: 0,
+  }));
+  let calls = 0;
+  const response = await handleRequest(request(parts), env, {
+    synthesize: async () => { calls++; return Uint8Array.of(1); },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(calls, 300);
+  assert.equal((await response.arrayBuffer()).byteLength, 300);
+});
+
+test('many segments synthesize in parallel but keep dialogue order', async () => {
+  const parts = Array.from({ length: 50 }, (_, index) => ({ ...one, text: `line ${index}`, voiceName: index % 2 ? 'sreymom' : 'piseth' }));
+  let active = 0;
+  let maxActive = 0;
+  const response = await handleRequest(request(parts), env, {
+    synthesize: async task => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      active--;
+      return Uint8Array.from([Number(task.text.split(' ')[1])]);
+    },
+  });
+  assert.equal(response.status, 200);
+  assert.ok(maxActive > 1, `expected parallel synthesis, max concurrency was ${maxActive}`);
+  assert.deepEqual(Array.from(new Uint8Array(await response.arrayBuffer())), Array.from({ length: 50 }, (_, index) => index));
 });
 
 test('API passes per-line Auto Speed overrides through to synthesis', async () => {

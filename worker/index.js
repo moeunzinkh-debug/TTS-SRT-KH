@@ -1,8 +1,16 @@
 import { InputError, prepareSegments } from './prepare.js';
 import { synthesizeEdge, UpstreamError } from './edge-tts.js';
 
-const MAX_FORM_BYTES = 256 * 1024;
+// 500,000 Khmer characters are ~1.5 MB in UTF-8 (plus JSON/multipart
+// overhead), so the form limit must comfortably exceed that and the 5 MB
+// browser upload limit.
+const MAX_FORM_BYTES = 8 * 1024 * 1024;
 const MAX_TOTAL_AUDIO_BYTES = 32 * 1024 * 1024;
+// Edge TTS calls are independent, so run a few at once: a 124-cue SRT that
+// used to need dozens of sequential calls (and hit the old 40-task cap)
+// now finishes in a fraction of the time. Results are reassembled in task
+// order, so the MP3 dialogue order never changes.
+const SYNTHESIS_CONCURRENCY = 6;
 
 function errorResponse(detail, status, extraHeaders = {}) {
   return Response.json({ detail }, {
@@ -63,14 +71,21 @@ async function processMulti(request, synthesize) {
 
   // All segments use Edge's 24 kHz / 48 kbps mono MP3 format. Concatenating
   // the MPEG frames in order avoids FFmpeg/transcoding and temporary files.
-  const audio = [];
+  const audio = new Array(tasks.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(SYNTHESIS_CONCURRENCY, tasks.length) }, async () => {
+    while (next < tasks.length) {
+      const index = next++;
+      const chunk = await synthesize(tasks[index]);
+      if (!(chunk instanceof Uint8Array) || !chunk.length) throw new UpstreamError('Edge TTS returned no audio.');
+      audio[index] = chunk;
+    }
+  });
+  await Promise.all(workers);
   let audioBytes = 0;
-  for (const task of tasks) {
-    const chunk = await synthesize(task);
-    if (!(chunk instanceof Uint8Array) || !chunk.length) throw new UpstreamError('Edge TTS returned no audio.');
+  for (const chunk of audio) {
     audioBytes += chunk.length;
     if (audioBytes > MAX_TOTAL_AUDIO_BYTES) throw new UpstreamError('Edge TTS audio is too large.');
-    audio.push(chunk);
   }
   return new Response(new Blob(audio, { type: 'audio/mpeg' }), {
     headers: { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' },
