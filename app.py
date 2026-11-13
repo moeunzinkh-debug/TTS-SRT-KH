@@ -4,11 +4,12 @@ import json
 import logging
 import math
 import re
+import urllib.parse
 from pathlib import Path
 
 import edge_tts
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
@@ -20,20 +21,24 @@ VOICE_MAP = {
     "visal": "km-KH-PisethNeural",
     "mina": "km-KH-SreymomNeural",
 }
-# 500,000 Khmer characters are ~1.5 MB in UTF-8 (plus JSON/multipart
+# 1,000,000 Khmer characters are ~3 MB in UTF-8 (plus JSON/multipart
 # overhead), so the form limit must comfortably exceed that and the 5 MB
 # browser upload limit.
-MAX_FORM_BYTES = 8 * 1024 * 1024
-MAX_TEXT_CHARACTERS = 500000
-MAX_PARTS = 1000
+MAX_FORM_BYTES = 12 * 1024 * 1024
+MAX_TEXT_CHARACTERS = 1000000
+MAX_PARTS = 6000
 # Synthesis runs with limited parallelism (see process_multi), so a full
-# SRT episode fits under this cap. 500,000 characters of one voice need
-# roughly 430 tasks, so the cap is 1,000. Splitting very long files into
-# ~20k-50k character chunks per Generate is faster and more reliable.
-MAX_SYNTHESIS_REQUESTS = 1000
+# SRT file fits under this cap. 1,000,000 characters of one voice need
+# roughly 860 tasks (3,500 escaped bytes each), and a dialogue alternating
+# Piseth/Sreymom on every cue of a 5,000-cue SRT needs exactly 5,000 tasks.
+# Split very long files into smaller chunks per Generate beyond that.
+MAX_SYNTHESIS_REQUESTS = 6000
 SYNTHESIS_CONCURRENCY = 6
+# A 5,000-cue SRT produces tens of MB of MP3 (48 kbps), so the response is
+# streamed in ordered waves instead of buffered in memory.
+EMIT_WAVE = 24
 MAX_ESCAPED_BYTES = 3500
-MAX_TOTAL_AUDIO_BYTES = 32 * 1024 * 1024
+MAX_TOTAL_AUDIO_BYTES = 128 * 1024 * 1024
 TIMING_LINE = re.compile(
     r"^\s*(?:\d{1,2}:)?\d{2}:\d{2}[,.]\d{1,3}\s*-->\s*"
     r"(?:\d{1,2}:)?\d{2}:\d{2}[,.]\d{1,3}(?:\s+.*)?\s*$"
@@ -203,11 +208,23 @@ async def process_multi(request: Request):
     async def receive_body():
         return {"type": "http.request", "body": bytes(body), "more_body": False}
 
-    try:
-        form = await Request(request.scope, receive_body).form()
-    except Exception:
-        raise HTTPException(400, "Send a multipart form containing data.") from None
-    raw = form.get("data")
+    if "multipart/form-data" in request.headers.get("content-type", ""):
+        try:
+            form = await Request(request.scope, receive_body).form()
+        except Exception:
+            raise HTTPException(400, "Send a multipart form containing data.") from None
+        raw = form.get("data")
+        auto_speed = form.get("autoSpeed", "false")
+    else:
+        # python-multipart caps a single field at 1 MB, which a 5,000-cue
+        # SRT exceeds; urlencoded bodies are parsed without that cap (the
+        # MAX_FORM_BYTES limit above still applies to the whole body).
+        try:
+            fields = urllib.parse.parse_qs(bytes(body).decode("utf-8"), keep_blank_values=True)
+        except Exception:
+            raise HTTPException(400, "Could not read request body.") from None
+        raw = fields.get("data", [None])[0]
+        auto_speed = fields.get("autoSpeed", ["false"])[0]
     if not isinstance(raw, str) or not raw:
         raise HTTPException(400, "No data provided.")
     if len(raw.encode("utf-8")) > MAX_FORM_BYTES:
@@ -216,7 +233,6 @@ async def process_multi(request: Request):
         parts = json.loads(raw)
     except (ValueError, TypeError):
         raise HTTPException(400, "Data must be a valid JSON array.") from None
-    auto_speed = form.get("autoSpeed", "false")
     if auto_speed not in ("true", "false"):
         raise HTTPException(400, "autoSpeed must be true or false.")
     segments = prepare_segments(parts, auto_speed == "true")
@@ -234,16 +250,38 @@ async def process_multi(request: Request):
                 logger.warning("Edge TTS synthesis failed: %s", type(error).__name__)
                 raise HTTPException(502, "Could not generate Edge TTS audio. Check the network and try again.") from None
 
-    # gather preserves task order, so the concatenated MP3 keeps dialogue order.
-    chunks = await asyncio.gather(*(synthesize_limited(segment) for segment in segments))
-    audio = bytearray()
-    for chunk in chunks:
-        if not chunk:
-            raise HTTPException(502, "Edge TTS returned no audio.")
-        audio.extend(chunk)
-        if len(audio) > MAX_TOTAL_AUDIO_BYTES:
-            raise HTTPException(502, "Edge TTS audio is too large.")
-    return Response(bytes(audio), media_type="audio/mpeg", headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+    # Synthesize the first wave eagerly so an upstream failure still returns
+    # a proper error status before any audio bytes are sent. Later waves are
+    # streamed in task order, which keeps the MP3 dialogue order and bounds
+    # memory for very long SRT files (5,000 cues = tens of MB of MP3).
+    first_wave = segments[:EMIT_WAVE]
+    first_chunks = await asyncio.gather(*(synthesize_limited(segment) for segment in first_wave))
+    total_bytes = 0
+
+    async def audio_stream():
+        nonlocal total_bytes
+        for chunk in first_chunks:
+            if not chunk:
+                raise HTTPException(502, "Edge TTS returned no audio.")
+            total_bytes += len(chunk)
+            if total_bytes > MAX_TOTAL_AUDIO_BYTES:
+                raise HTTPException(502, "Edge TTS audio is too large.")
+            yield chunk
+        cursor = len(first_wave)
+        while cursor < len(segments):
+            wave = segments[cursor:cursor + EMIT_WAVE]
+            # gather preserves task order within each wave.
+            chunks = await asyncio.gather(*(synthesize_limited(segment) for segment in wave))
+            cursor += len(wave)
+            for chunk in chunks:
+                if not chunk:
+                    raise HTTPException(502, "Edge TTS returned no audio.")
+                total_bytes += len(chunk)
+                if total_bytes > MAX_TOTAL_AUDIO_BYTES:
+                    raise HTTPException(502, "Edge TTS audio is too large.")
+                yield chunk
+
+    return StreamingResponse(audio_stream(), media_type="audio/mpeg", headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
 
 app.mount("/", StaticFiles(directory=Path(__file__).resolve().parent / "public", html=True), name="public")

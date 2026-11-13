@@ -1,16 +1,20 @@
 import { InputError, prepareSegments } from './prepare.js';
 import { synthesizeEdge, UpstreamError } from './edge-tts.js';
 
-// 500,000 Khmer characters are ~1.5 MB in UTF-8 (plus JSON/multipart
+// 1,000,000 Khmer characters are ~3 MB in UTF-8 (plus JSON/multipart
 // overhead), so the form limit must comfortably exceed that and the 5 MB
 // browser upload limit.
-const MAX_FORM_BYTES = 8 * 1024 * 1024;
-const MAX_TOTAL_AUDIO_BYTES = 32 * 1024 * 1024;
-// Edge TTS calls are independent, so run a few at once: a 124-cue SRT that
-// used to need dozens of sequential calls (and hit the old 40-task cap)
-// now finishes in a fraction of the time. Results are reassembled in task
-// order, so the MP3 dialogue order never changes.
+const MAX_FORM_BYTES = 12 * 1024 * 1024;
+// A 5,000-cue SRT produces tens of MB of MP3 (48 kbps), so the response is
+// streamed in ordered waves instead of buffered in one Blob — the Worker
+// memory limit is 128 MB and buffering everything would exceed it.
+const MAX_TOTAL_AUDIO_BYTES = 128 * 1024 * 1024;
+// Edge TTS calls are independent, so run a few at once: a 5,000-cue SRT
+// that used to need thousands of sequential calls now finishes in a
+// fraction of the time. Each wave is emitted in task order, so the MP3
+// dialogue order never changes.
 const SYNTHESIS_CONCURRENCY = 6;
+const EMIT_WAVE = 24;
 
 function errorResponse(detail, status, extraHeaders = {}) {
   return Response.json({ detail }, {
@@ -71,23 +75,53 @@ async function processMulti(request, synthesize) {
 
   // All segments use Edge's 24 kHz / 48 kbps mono MP3 format. Concatenating
   // the MPEG frames in order avoids FFmpeg/transcoding and temporary files.
-  const audio = new Array(tasks.length);
-  let next = 0;
-  const workers = Array.from({ length: Math.min(SYNTHESIS_CONCURRENCY, tasks.length) }, async () => {
-    while (next < tasks.length) {
-      const index = next++;
-      const chunk = await synthesize(tasks[index]);
-      if (!(chunk instanceof Uint8Array) || !chunk.length) throw new UpstreamError('Edge TTS returned no audio.');
-      audio[index] = chunk;
-    }
-  });
-  await Promise.all(workers);
-  let audioBytes = 0;
-  for (const chunk of audio) {
-    audioBytes += chunk.length;
-    if (audioBytes > MAX_TOTAL_AUDIO_BYTES) throw new UpstreamError('Edge TTS audio is too large.');
+  // Synthesize one wave (EMIT_WAVE tasks) with bounded parallelism; waves
+  // are emitted in task order so the streamed MP3 keeps dialogue order and
+  // memory stays bounded no matter how many cues the SRT has.
+  let totalBytes = 0;
+  const account = chunk => {
+    totalBytes += chunk.length;
+    if (totalBytes > MAX_TOTAL_AUDIO_BYTES) throw new UpstreamError('Edge TTS audio is too large.');
+  };
+  async function synthesizeWave(start, end) {
+    const wave = new Array(end - start);
+    let next = start;
+    const workers = Array.from({ length: Math.min(SYNTHESIS_CONCURRENCY, end - start) }, async () => {
+      while (next < end) {
+        const index = next++;
+        const chunk = await synthesize(tasks[index]);
+        if (!(chunk instanceof Uint8Array) || !chunk.length) throw new UpstreamError('Edge TTS returned no audio.');
+        wave[index - start] = chunk;
+      }
+    });
+    await Promise.all(workers);
+    return wave;
   }
-  return new Response(new Blob(audio, { type: 'audio/mpeg' }), {
+
+  // Synthesize the first wave eagerly so an upstream failure still returns
+  // a proper error status before any audio bytes are sent.
+  const firstWave = await synthesizeWave(0, Math.min(EMIT_WAVE, tasks.length));
+  for (const chunk of firstWave) account(chunk);
+  let cursor = firstWave.length;
+  const stream = new ReadableStream({
+    start(controller) {
+      for (const chunk of firstWave) controller.enqueue(chunk);
+    },
+    async pull(controller) {
+      if (cursor >= tasks.length) {
+        controller.close();
+        return;
+      }
+      const end = Math.min(cursor + EMIT_WAVE, tasks.length);
+      const wave = await synthesizeWave(cursor, end);
+      cursor = end;
+      for (const chunk of wave) {
+        account(chunk);
+        controller.enqueue(chunk);
+      }
+    },
+  });
+  return new Response(stream, {
     headers: { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' },
   });
 }

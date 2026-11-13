@@ -65,19 +65,19 @@ def test_invalid_inputs_are_rejected(parts):
 
 def test_request_limits():
     with pytest.raises(HTTPException) as error:
-        app.prepare_segments([part("x" * 500001)])
+        app.prepare_segments([part("x" * 1000001)])
     assert error.value.status_code == 413
-    many = [part("hello", voiceName="sreymom" if index % 2 else "piseth") for index in range(1001)]
+    many = [part("hello", voiceName="sreymom" if index % 2 else "piseth") for index in range(6001)]
     with pytest.raises(HTTPException) as error:
         app.prepare_segments(many)
     assert error.value.status_code == 413
 
 
-def test_supports_the_full_500000_character_maximum():
-    tasks = app.prepare_segments([part("x" * 500000)])
-    assert 1 < len(tasks) <= 1000
-    khmer_tasks = app.prepare_segments([part("ខ" * 500000)])
-    assert len(khmer_tasks) <= 1000
+def test_supports_the_full_1000000_character_maximum():
+    tasks = app.prepare_segments([part("x" * 1000000)])
+    assert 1 < len(tasks) <= 6000
+    khmer_tasks = app.prepare_segments([part("ខ" * 1000000)])
+    assert len(khmer_tasks) <= 6000
 
 
 def test_124_cue_srt_with_auto_speed_and_alternating_voices_fit():
@@ -102,7 +102,35 @@ def test_300_cue_srt_fits_in_one_run():
     assert len(app.prepare_segments(alternating)) == 300
     srt = "".join(f"{index}\n00:00:01,000 --> 00:00:02,000\n{'ខ' * 20}\n\n" for index in range(1, 301))
     tasks = app.prepare_segments([part(srt)], auto_speed=True)
-    assert len(tasks) <= 1000
+    assert len(tasks) <= 6000
+
+
+def test_5000_cue_srt_fits_in_one_run():
+    alternating = [part("ខ" * 20, voiceName="sreymom" if index % 2 else "piseth") for index in range(5000)]
+    assert len(app.prepare_segments(alternating)) == 5000
+    srt = "".join(f"{index}\n00:00:01,000 --> 00:00:02,000\n{'ខ' * 20}\n\n" for index in range(1, 5001))
+    tasks = app.prepare_segments([part(srt)], auto_speed=True)
+    assert len(tasks) <= 6000
+    with pytest.raises(HTTPException) as error:
+        app.prepare_segments([part("ខ" * 20, voiceName="sreymom" if index % 2 else "piseth") for index in range(6001)])
+    assert error.value.status_code == 413
+
+
+def test_api_streams_a_5000_cue_srt_in_one_response(monkeypatch):
+    calls = 0
+
+    async def fake_synthesize(_task):
+        nonlocal calls
+        calls += 1
+        return b"\xff"
+
+    monkeypatch.setattr(app, "synthesize", fake_synthesize)
+    parts = [part("ខ" * 20, voiceName="sreymom" if index % 2 else "piseth") for index in range(5000)]
+    response = client.post("/api/process-multi", data=form(parts))
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/mpeg"
+    assert calls == 5000
+    assert response.content == b"\xff" * 5000
 
 
 def test_synthesize_uses_current_edge_tts_and_filters_metadata(monkeypatch):
@@ -150,7 +178,7 @@ def test_api_validation_failure_and_no_partial_audio(monkeypatch):
     assert client.post("/api/process-multi", data=form([part("hello", pitch=None)])).status_code == 400
     chunked = client.post(
         "/api/process-multi",
-        content=(chunk for chunk in [b"data=", b"x" * (9 * 1024 * 1024)]),
+        content=(chunk for chunk in [b"data=", b"x" * (13 * 1024 * 1024)]),
         headers={"content-type": "application/x-www-form-urlencoded"},
     )
     assert chunked.status_code == 413

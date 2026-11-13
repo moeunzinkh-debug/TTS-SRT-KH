@@ -6,16 +6,15 @@ export const VOICES = Object.freeze({
   visal: 'km-KH-PisethNeural',
   mina: 'km-KH-SreymomNeural',
 });
-export const MAX_TEXT_CHARACTERS = 500000;
-export const MAX_PARTS = 1000;
+export const MAX_TEXT_CHARACTERS = 1000000;
+export const MAX_PARTS = 6000;
 // Synthesis runs with limited parallelism (see worker/index.js), so a full
-// SRT episode fits: 124 cues of one voice collapse to a handful of tasks,
-// and even a dialogue alternating Piseth/Sreymom on every cue stays under
-// this cap. 500,000 characters of one voice need roughly 430 tasks
-// (3,500 escaped bytes each), so the cap is 1,000. Very long files still
-// take a while and produce a large MP3 — splitting into ~20k–50k character
-// chunks per Generate is faster and more reliable.
-export const MAX_SYNTHESIS_REQUESTS = 1000;
+// SRT file fits: 5,000 cues of one voice collapse to ~860 tasks (3,500
+// escaped bytes each), and even a dialogue alternating Piseth/Sreymom on
+// every cue needs exactly 5,000 tasks — under the 6,000 cap. 1,000,000
+// characters cover 5,000 cues of up to 200 characters each. Beyond that,
+// split very long files into smaller chunks per Generate.
+export const MAX_SYNTHESIS_REQUESTS = 6000;
 export const MAX_ESCAPED_BYTES = 3500;
 
 export class InputError extends Error {

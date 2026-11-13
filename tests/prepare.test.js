@@ -46,18 +46,18 @@ test('rejects invalid parts, settings, excess text and too many voice changes', 
     [part(' ')],
   ];
   for (const input of bad) assert.throws(() => prepareSegments(input), InputError);
-  assert.throws(() => prepareSegments([part('x'.repeat(500001))]), error => error.status === 413);
-  const manyVoices = Array.from({ length: 1001 }, (_, index) => part('hello', { voiceName: index % 2 ? 'sreymom' : 'piseth' }));
+  assert.throws(() => prepareSegments([part('x'.repeat(1000001))]), error => error.status === 413);
+  const manyVoices = Array.from({ length: 6001 }, (_, index) => part('hello', { voiceName: index % 2 ? 'sreymom' : 'piseth' }));
   assert.throws(() => prepareSegments(manyVoices), error => error.status === 413);
 });
 
-test('supports the full 500,000-character maximum', () => {
-  const tasks = prepareSegments([part('x'.repeat(500000))]);
+test('supports the full 1,000,000-character maximum', () => {
+  const tasks = prepareSegments([part('x'.repeat(1000000))]);
   assert.ok(tasks.length > 1);
-  assert.ok(tasks.length <= 1000);
+  assert.ok(tasks.length <= 6000);
   // Khmer text (3 UTF-8 bytes per character) also fits under the task cap.
-  const khmerTasks = prepareSegments([part('ខ'.repeat(500000))]);
-  assert.ok(khmerTasks.length <= 1000, `expected <=1000 tasks, got ${khmerTasks.length}`);
+  const khmerTasks = prepareSegments([part('ខ'.repeat(1000000))]);
+  assert.ok(khmerTasks.length <= 6000, `expected <=6000 tasks, got ${khmerTasks.length}`);
 });
 
 test('regression: a 124-cue SRT with Auto Speed ON no longer exceeds the segment cap', async () => {
@@ -107,8 +107,28 @@ test('regression: a 300-cue SRT fits in one run in every common configuration', 
   for (let index = 0; index < 300; index++) settings.set(index * 4 + 2, { speed: 0.5 + (index % 16) * 0.1, pitch: (index % 21) - 10 });
   const customized = buildVoiceParts(srt, 'piseth', voices, tags, undefined, settings, false);
   assert.equal(prepareSegments(customized).length, 300);
-  // 301 cues of alternating voices still exceed nothing: 301 < 1000 too,
-  // but 300 is the documented supported episode length.
+});
+
+test('regression: a 5,000-cue SRT fits in one run in every common configuration', async () => {
+  const { buildVoiceParts } = await import('../public/text.js');
+  const voices = { piseth: { speed: 1, pitch: 0 }, sreymom: { speed: 1, pitch: 0 } };
+  const tags = { piseth: { speed: 1, pitch: 0 }, sreymom: { speed: 1, pitch: 0 } };
+  let srt = '';
+  for (let index = 1; index <= 5000; index++) {
+    srt += `${index}\n00:00:01,000 --> 00:00:02,000\n${'ខ'.repeat(20)}\n\n`;
+  }
+  // Single voice, Auto Speed ON: collapses to a handful of tasks.
+  const single = buildVoiceParts(srt, 'piseth', voices, tags, undefined, undefined, true);
+  assert.ok(prepareSegments(single, true).length <= 6000);
+  // Alternating Piseth/Sreymom per cue: worst case, exactly 5,000 tasks.
+  const overrides = new Map();
+  for (let index = 0; index < 5000; index++) overrides.set(index * 4 + 2, index % 2 ? 'sreymom' : 'piseth');
+  const alternating = buildVoiceParts(srt, 'piseth', voices, tags, overrides, undefined, false);
+  assert.equal(alternating.length, 5000);
+  assert.equal(prepareSegments(alternating).length, 5000);
+  // 6,001 alternating cues still exceed the cap.
+  const tooMany = Array.from({ length: 6001 }, (_, index) => part('ខ'.repeat(20), { voiceName: index % 2 ? 'sreymom' : 'piseth' }));
+  assert.throws(() => prepareSegments(tooMany), error => error.status === 413);
 });
 
 test('per-part Auto Speed overrides the global flag without changing older requests', () => {
