@@ -72,7 +72,7 @@ test('API errors are displayed, and a later success revokes the previous URL', a
 
 test('a 413 too-many-segments error explains the fix in Khmer', async () => {
   element('editor').value = 'សួស្តី';
-  globalThis.fetch = async () => Response.json({ detail: 'Too many voice changes or text segments (maximum 1000).' }, { status: 413 });
+  globalThis.fetch = async () => Response.json({ detail: 'Too many voice changes or text segments (maximum 6000).' }, { status: 413 });
   const originalError = console.error;
   console.error = () => {};
   try {
